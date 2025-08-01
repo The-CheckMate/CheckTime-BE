@@ -1,0 +1,874 @@
+// 사이트 관리를 위하여...
+const { Pool } = require('pg');
+const levenshtein = require('fast-levenshtein');
+const { URL } = require('url');
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL
+});
+
+class SiteService {
+  constructor() {
+    this.similarityThreshold = 0.6; // 유사도 임계값
+    this.maxSearchResults = 10; // 최대 검색 결과 수
+  }
+
+  /**
+   * 모든 사이트 조회
+   */
+  async getAllSites(page = 1, limit = 20, category = null, sortBy = 'usage_count') {
+    try {
+      let query = `
+        SELECT 
+          id, url, name, category, description, optimal_offset,
+          keywords, usage_count, average_rtt, success_rate,
+          created_at, updated_at
+        FROM sites 
+        WHERE is_active = true
+      `;
+      
+      const params = [];
+      let paramIndex = 1;
+      
+      if (category) {
+        query += ` AND category = $${paramIndex}`;
+        params.push(category);
+        paramIndex++;
+      }
+      
+      // 정렬
+      const validSortColumns = ['usage_count', 'success_rate', 'average_rtt', 'name', 'created_at'];
+      const sortColumn = validSortColumns.includes(sortBy) ? sortBy : 'usage_count';
+      
+      if (sortColumn === 'usage_count' || sortColumn === 'success_rate') {
+        query += ` ORDER BY ${sortColumn} DESC`;
+      } else {
+        query += ` ORDER BY ${sortColumn} ASC`;
+      }
+      
+      // 페이징
+      const offset = (page - 1) * limit;
+      query += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+      params.push(limit, offset);
+      
+      const result = await pool.query(query, params);
+      
+      // 전체 개수 조회
+      let countQuery = 'SELECT COUNT(*) FROM sites WHERE is_active = true';
+      const countParams = [];
+      
+      if (category) {
+        countQuery += ' AND category = $1';
+        countParams.push(category);
+      }
+      
+      const countResult = await pool.query(countQuery, countParams);
+      const totalCount = parseInt(countResult.rows[0].count);
+      
+      return {
+        sites: result.rows,
+        pagination: {
+          currentPage: page,
+          totalPages: Math.ceil(totalCount / limit),
+          totalCount,
+          hasNext: page < Math.ceil(totalCount / limit),
+          hasPrev: page > 1
+        }
+      };
+      
+    } catch (error) {
+      console.error('사이트 목록 조회 실패:', error);
+      throw new Error('사이트 목록을 불러올 수 없습니다');
+    }
+  }
+
+  /**
+   * 사이트 검색 (유사도 기반)
+   */
+  async searchSites(searchTerm, userId = null) {
+    try {
+      console.log(`사이트 검색: "${searchTerm}"`);
+      
+      // 1. 데이터베이스에서 모든 활성 사이트 조회
+      const allSitesResult = await pool.query(`
+        SELECT id, url, name, category, keywords, usage_count, success_rate, average_rtt
+        FROM sites 
+        WHERE is_active = true
+      `);
+      
+      // 2. 한글 도메인 매핑 확인
+      const koreanMappingResult = await this.findKoreanDomainMapping(searchTerm);
+      
+      // 3. 유사도 계산 및 검색 결과 생성
+      const searchResults = [];
+      
+      for (const site of allSitesResult.rows) {
+        const similarity = this.calculateSiteSimilarity(searchTerm, site);
+        
+        if (similarity >= this.similarityThreshold) {
+          searchResults.push({
+            ...site,
+            similarity: parseFloat(similarity.toFixed(3)),
+            matchReason: this.getMatchReason(searchTerm, site, similarity)
+          });
+        }
+      }
+      
+      // 4. 한글 도메인 매핑 결과 추가
+      if (koreanMappingResult) {
+        // 중복 제거 후 추가
+        const existingUrls = searchResults.map(s => s.url);
+        if (!existingUrls.includes(koreanMappingResult.actual_url)) {
+          const mappedSite = await this.getSiteByUrl(koreanMappingResult.actual_url);
+          if (mappedSite) {
+            searchResults.unshift({
+              ...mappedSite,
+              similarity: 1.0,
+              matchReason: 'korean_domain_mapping'
+            });
+          }
+        }
+      }
+      
+      // 5. 정확한 URL 매치 확인
+      if (this.isValidUrl(searchTerm)) {
+        const exactMatch = await this.getSiteByUrl(searchTerm);
+        if (exactMatch) {
+          const existingIndex = searchResults.findIndex(s => s.url === searchTerm);
+          if (existingIndex >= 0) {
+            searchResults[existingIndex].similarity = 1.0;
+            searchResults[existingIndex].matchReason = 'exact_url_match';
+          } else {
+            searchResults.unshift({
+              ...exactMatch,
+              similarity: 1.0,
+              matchReason: 'exact_url_match'
+            });
+          }
+        }
+      }
+      
+      // 6. 결과 정렬 및 제한
+      const sortedResults = searchResults
+        .sort((a, b) => {
+          // 정확한 매치 우선
+          if (a.similarity !== b.similarity) {
+            return b.similarity - a.similarity;
+          }
+          // 사용 빈도 순
+          return b.usage_count - a.usage_count;
+        })
+        .slice(0, this.maxSearchResults);
+      
+      // 7. 사용자 즐겨찾기 정보 추가
+      if (userId) {
+        await this.addUserFavoriteInfo(sortedResults, userId);
+      }
+      
+      console.log(`검색 완료: ${sortedResults.length}개 결과 찾음`);
+      
+      return {
+        searchTerm,
+        results: sortedResults,
+        totalFound: sortedResults.length,
+        koreanMapping: koreanMappingResult,
+        searchedAt: new Date().toISOString()
+      };
+      
+    } catch (error) {
+      console.error('사이트 검색 실패:', error);
+      throw new Error('사이트 검색 중 오류가 발생했습니다');
+    }
+  }
+
+  /**
+   * 사이트 유사도 계산
+   */
+  calculateSiteSimilarity(searchTerm, site) {
+    const term = searchTerm.toLowerCase().trim();
+    let maxSimilarity = 0;
+    
+    // 1. 사이트 이름과의 유사도
+    const nameNormalized = this.normalizeKoreanText(site.name);
+    const nameSimilarity = this.calculateStringSimilarity(term, nameNormalized);
+    maxSimilarity = Math.max(maxSimilarity, nameSimilarity);
+    
+    // 2. URL과의 유사도
+    if (site.url) {
+      const urlParts = this.extractUrlParts(site.url);
+      for (const part of urlParts) {
+        const urlSimilarity = this.calculateStringSimilarity(term, part);
+        maxSimilarity = Math.max(maxSimilarity, urlSimilarity);
+      }
+    }
+    
+    // 3. 키워드와의 유사도
+    if (site.keywords && Array.isArray(site.keywords)) {
+      for (const keyword of site.keywords) {
+        const keywordNormalized = this.normalizeKoreanText(keyword);
+        const keywordSimilarity = this.calculateStringSimilarity(term, keywordNormalized);
+        maxSimilarity = Math.max(maxSimilarity, keywordSimilarity);
+        
+        // 완전 일치 보너스
+        if (keywordNormalized === term) {
+          maxSimilarity = 1.0;
+          break;
+        }
+      }
+    }
+    
+    // 4. 부분 문자열 매치 보너스
+    const nameContains = nameNormalized.includes(term) || term.includes(nameNormalized);
+    if (nameContains && term.length >= 2) {
+      maxSimilarity = Math.max(maxSimilarity, 0.8);
+    }
+    
+    return maxSimilarity;
+  }
+
+  /**
+   * 문자열 유사도 계산 (Levenshtein + 정규화)
+   */
+  calculateStringSimilarity(str1, str2) {
+    if (!str1 || !str2) return 0;
+    
+    const s1 = str1.toLowerCase().trim();
+    const s2 = str2.toLowerCase().trim();
+    
+    if (s1 === s2) return 1.0;
+    
+    const maxLength = Math.max(s1.length, s2.length);
+    if (maxLength === 0) return 1.0;
+    
+    const distance = levenshtein.get(s1, s2);
+    return 1 - (distance / maxLength);
+  }
+
+  /**
+   * 한글 텍스트 정규화
+   */
+  normalizeKoreanText(text) {
+    if (!text) return '';
+    
+    return text
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, '') // 공백 제거
+      .replace(/[^\w가-힣]/g, ''); // 특수문자 제거, 한글과 영숫자만 유지
+  }
+
+  /**
+   * URL 파트 추출
+   */
+  extractUrlParts(url) {
+    try {
+      const parsedUrl = new URL(url);
+      const parts = [];
+      
+      // 도메인 파트
+      const hostname = parsedUrl.hostname.replace('www.', '');
+      parts.push(hostname);
+      
+      // 도메인을 점으로 분리
+      const domainParts = hostname.split('.');
+      parts.push(...domainParts);
+      
+      // 경로 파트
+      if (parsedUrl.pathname && parsedUrl.pathname !== '/') {
+        const pathParts = parsedUrl.pathname.split('/').filter(p => p.length > 0);
+        parts.push(...pathParts);
+      }
+      
+      return parts.map(part => part.toLowerCase());
+      
+    } catch (error) {
+      return [url.toLowerCase()];
+    }
+  }
+
+  /**
+   * 매치 이유 반환
+   */
+  getMatchReason(searchTerm, site, similarity) {
+    const term = searchTerm.toLowerCase();
+    const siteName = site.name.toLowerCase();
+    
+    if (similarity === 1.0) {
+      if (siteName === term) return 'exact_name_match';
+      if (site.keywords && site.keywords.some(k => k.toLowerCase() === term)) {
+        return 'exact_keyword_match';
+      }
+      return 'perfect_match';
+    }
+    
+    if (similarity >= 0.9) return 'high_similarity';
+    if (similarity >= 0.8) return 'good_similarity';
+    if (siteName.includes(term) || term.includes(siteName)) return 'partial_match';
+    
+    return 'keyword_similarity';
+  }
+
+  /**
+   * 한글 도메인 매핑 찾기
+   */
+  async findKoreanDomainMapping(searchTerm) {
+    try {
+      const result = await pool.query(`
+        SELECT korean_name, actual_url, similarity_threshold
+        FROM domain_mappings
+        WHERE LOWER(korean_name) = LOWER($1)
+           OR korean_name ILIKE $2
+        ORDER BY 
+          CASE WHEN LOWER(korean_name) = LOWER($1) THEN 1 ELSE 2 END,
+          LENGTH(korean_name) ASC
+        LIMIT 1
+      `, [searchTerm, `%${searchTerm}%`]);
+      
+      if (result.rows.length > 0) {
+        const mapping = result.rows[0];
+        const similarity = this.calculateStringSimilarity(searchTerm, mapping.korean_name);
+        
+        if (similarity >= mapping.similarity_threshold) {
+          return mapping;
+        }
+      }
+      
+      return null;
+      
+    } catch (error) {
+      console.error('한글 도메인 매핑 검색 실패:', error);
+      return null;
+    }
+  }
+
+  /**
+   * URL로 사이트 조회
+   */
+  async getSiteByUrl(url) {
+    try {
+      const result = await pool.query(
+        'SELECT * FROM sites WHERE url = $1 AND is_active = true',
+        [url]
+      );
+      
+      return result.rows.length > 0 ? result.rows[0] : null;
+      
+    } catch (error) {
+      console.error('URL로 사이트 조회 실패:', error);
+      return null;
+    }
+  }
+
+  /**
+   * 새 사이트 추가
+   */
+  async addSite(siteData, createdBy = null) {
+    try {
+      // URL 유효성 검증
+      if (!this.isValidUrl(siteData.url)) {
+        throw new Error('유효하지 않은 URL입니다');
+      }
+      
+      // 중복 검사
+      const existingSite = await this.getSiteByUrl(siteData.url);
+      if (existingSite) {
+        throw new Error('이미 등록된 사이트입니다');
+      }
+      
+      const {
+        url,
+        name,
+        category = 'general',
+        description = null,
+        optimal_offset = 2500,
+        keywords = []
+      } = siteData;
+      
+      const result = await pool.query(`
+        INSERT INTO sites (url, name, category, description, optimal_offset, keywords, created_by)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING *
+      `, [url, name, category, description, optimal_offset, keywords, createdBy]);
+      
+      console.log(`새 사이트 추가됨: ${name} (${url})`);
+      
+      return result.rows[0];
+      
+    } catch (error) {
+      console.error('사이트 추가 실패:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 사이트 업데이트
+   */
+  async updateSite(siteId, updateData, userId = null) {
+    try {
+      const existingSite = await pool.query(
+        'SELECT * FROM sites WHERE id = $1 AND is_active = true',
+        [siteId]
+      );
+      
+      if (existingSite.rows.length === 0) {
+        throw new Error('사이트를 찾을 수 없습니다');
+      }
+      
+      const allowedFields = [
+        'name', 'category', 'description', 'optimal_offset', 'keywords'
+      ];
+      
+      const updateFields = [];
+      const updateValues = [];
+      let paramIndex = 1;
+      
+      for (const [field, value] of Object.entries(updateData)) {
+        if (allowedFields.includes(field) && value !== undefined) {
+          updateFields.push(`${field} = $${paramIndex}`);
+          updateValues.push(value);
+          paramIndex++;
+        }
+      }
+      
+      if (updateFields.length === 0) {
+        throw new Error('업데이트할 필드가 없습니다');
+      }
+      
+      updateFields.push(`updated_at = CURRENT_TIMESTAMP`);
+      updateValues.push(siteId);
+      
+      const query = `
+        UPDATE sites 
+        SET ${updateFields.join(', ')}
+        WHERE id = $${paramIndex}
+        RETURNING *
+      `;
+      
+      const result = await pool.query(query, updateValues);
+      
+      console.log(`사이트 업데이트됨: ID ${siteId}`);
+      
+      return result.rows[0];
+      
+    } catch (error) {
+      console.error('사이트 업데이트 실패:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 사이트 삭제 (소프트 삭제)
+   */
+  async deleteSite(siteId, userId = null) {
+    try {
+      const result = await pool.query(`
+        UPDATE sites 
+        SET is_active = false, updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1 AND is_active = true
+        RETURNING *
+      `, [siteId]);
+      
+      if (result.rows.length === 0) {
+        throw new Error('사이트를 찾을 수 없습니다');
+      }
+      
+      console.log(`사이트 삭제됨: ID ${siteId}`);
+      
+      return { success: true, message: '사이트가 삭제되었습니다' };
+      
+    } catch (error) {
+      console.error('사이트 삭제 실패:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 인기 사이트 조회
+   */
+  async getPopularSites(limit = 10, category = null) {
+    try {
+      let query = `
+        SELECT id, url, name, category, usage_count, success_rate, average_rtt
+        FROM sites 
+        WHERE is_active = true
+      `;
+      
+      const params = [];
+      
+      if (category) {
+        query += ' AND category = $1';
+        params.push(category);
+      }
+      
+      query += ' ORDER BY usage_count DESC, success_rate DESC LIMIT $' + (params.length + 1);
+      params.push(limit);
+      
+      const result = await pool.query(query, params);
+      
+      return result.rows;
+      
+    } catch (error) {
+      console.error('인기 사이트 조회 실패:', error);
+      throw new Error('인기 사이트를 불러올 수 없습니다');
+    }
+  }
+
+  /**
+   * 카테고리 목록 조회
+   */
+  async getCategories() {
+    try {
+      const result = await pool.query(`
+        SELECT 
+          category,
+          COUNT(*) as site_count,
+          AVG(success_rate) as avg_success_rate
+        FROM sites 
+        WHERE is_active = true 
+        GROUP BY category 
+        ORDER BY site_count DESC
+      `);
+      
+      return result.rows;
+      
+    } catch (error) {
+      console.error('카테고리 목록 조회 실패:', error);
+      throw new Error('카테고리 목록을 불러올 수 없습니다');
+    }
+  }
+
+  /**
+   * 사용자 즐겨찾기 정보 추가
+   */
+  async addUserFavoriteInfo(sites, userId) {
+    try {
+      const siteIds = sites.map(s => s.id).filter(id => id);
+      
+      if (siteIds.length === 0) return;
+      
+      const favResult = await pool.query(`
+        SELECT site_id, custom_name, custom_offset, notification_enabled
+        FROM user_favorites 
+        WHERE user_id = $1 AND site_id = ANY($2)
+      `, [userId, siteIds]);
+      
+      const favorites = new Map();
+      favResult.rows.forEach(fav => {
+        favorites.set(fav.site_id, fav);
+      });
+      
+      sites.forEach(site => {
+        const favInfo = favorites.get(site.id);
+        site.isFavorite = !!favInfo;
+        if (favInfo) {
+          site.favoriteInfo = {
+            customName: favInfo.custom_name,
+            customOffset: favInfo.custom_offset,
+            notificationEnabled: favInfo.notification_enabled
+          };
+        }
+      });
+      
+    } catch (error) {
+      console.error('즐겨찾기 정보 추가 실패:', error);
+      // 에러가 발생해도 검색 결과는 반환
+    }
+  }
+
+  /**
+   * 즐겨찾기 추가
+   */
+  async addToFavorites(userId, siteId, customName = null, customOffset = null) {
+    try {
+      // 사이트 존재 확인
+      const siteResult = await pool.query(
+        'SELECT * FROM sites WHERE id = $1 AND is_active = true',
+        [siteId]
+      );
+      
+      if (siteResult.rows.length === 0) {
+        throw new Error('사이트를 찾을 수 없습니다');
+      }
+      
+      // 중복 확인
+      const existingFav = await pool.query(
+        'SELECT * FROM user_favorites WHERE user_id = $1 AND site_id = $2',
+        [userId, siteId]
+      );
+      
+      if (existingFav.rows.length > 0) {
+        throw new Error('이미 즐겨찾기에 추가된 사이트입니다');
+      }
+      
+      const result = await pool.query(`
+        INSERT INTO user_favorites (user_id, site_id, custom_name, custom_offset)
+        VALUES ($1, $2, $3, $4)
+        RETURNING *
+      `, [userId, siteId, customName, customOffset]);
+      
+      return result.rows[0];
+      
+    } catch (error) {
+      console.error('즐겨찾기 추가 실패:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 즐겨찾기 제거
+   */
+  async removeFromFavorites(userId, siteId) {
+    try {
+      const result = await pool.query(`
+        DELETE FROM user_favorites 
+        WHERE user_id = $1 AND site_id = $2
+        RETURNING *
+      `, [userId, siteId]);
+      
+      if (result.rows.length === 0) {
+        throw new Error('즐겨찾기에서 찾을 수 없습니다');
+      }
+      
+      return { success: true, message: '즐겨찾기에서 제거되었습니다' };
+      
+    } catch (error) {
+      console.error('즐겨찾기 제거 실패:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 사용자 즐겨찾기 목록 조회
+   */
+  async getUserFavorites(userId) {
+    try {
+      const result = await pool.query(`
+        SELECT 
+          uf.*,
+          s.url, s.name, s.category, s.optimal_offset,
+          s.usage_count, s.success_rate, s.average_rtt
+        FROM user_favorites uf
+        JOIN sites s ON uf.site_id = s.id
+        WHERE uf.user_id = $1 AND s.is_active = true
+        ORDER BY uf.created_at DESC
+      `, [userId]);
+      
+      return result.rows.map(row => ({
+        id: row.id,
+        siteId: row.site_id,
+        customName: row.custom_name || row.name,
+        customOffset: row.custom_offset || row.optimal_offset,
+        notificationEnabled: row.notification_enabled,
+        site: {
+          url: row.url,
+          name: row.name,
+          category: row.category,
+          usageCount: row.usage_count,
+          successRate: row.success_rate,
+          averageRTT: row.average_rtt
+        },
+        addedAt: row.created_at
+      }));
+      
+    } catch (error) {
+      console.error('즐겨찾기 목록 조회 실패:', error);
+      throw new Error('즐겨찾기 목록을 불러올 수 없습니다');
+    }
+  }
+
+  /**
+   * URL 유효성 검증
+   */
+  isValidUrl(url) {
+    try {
+      new URL(url);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * 사이트 사용량 증가
+   */
+  async incrementUsage(siteId) {
+    try {
+      await pool.query(`
+        UPDATE sites 
+        SET usage_count = usage_count + 1, updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+      `, [siteId]);
+    } catch (error) {
+      console.error('사이트 사용량 증가 실패:', error);
+    }
+  }
+
+  /**
+   * URL 자동 보정 제안
+   */
+  async suggestUrlCorrection(inputUrl) {
+    try {
+      // 일반적인 URL 오타 패턴 보정
+      let correctedUrl = inputUrl.toLowerCase().trim();
+      
+      // 프로토콜 자동 추가
+      if (!correctedUrl.startsWith('http://') && !correctedUrl.startsWith('https://')) {
+        correctedUrl = 'https://' + correctedUrl;
+      }
+      
+      // 일반적인 오타 패턴 보정
+      const commonCorrections = {
+        'htps://': 'https://',
+        'http;//': 'https://',
+        'wwww.': 'www.',
+        '.co.kr': '.co.kr',
+        '.coom': '.com',
+        '.comm': '.com',
+        'goole': 'google',
+        'naver.co': 'naver.com'
+      };
+      
+      for (const [wrong, correct] of Object.entries(commonCorrections)) {
+        correctedUrl = correctedUrl.replace(wrong, correct);
+      }
+      
+      // 데이터베이스에서 유사한 URL 찾기
+      const allSites = await pool.query(`
+        SELECT url, name FROM sites WHERE is_active = true
+      `);
+      
+      const suggestions = [];
+      
+      for (const site of allSites.rows) {
+        const similarity = this.calculateStringSimilarity(correctedUrl, site.url);
+        if (similarity >= 0.7) {
+          suggestions.push({
+            originalUrl: site.url,
+            siteName: site.name,
+            similarity: parseFloat(similarity.toFixed(3))
+          });
+        }
+      }
+      
+      // 유사도 순으로 정렬
+      suggestions.sort((a, b) => b.similarity - a.similarity);
+      
+      return {
+        inputUrl,
+        correctedUrl: correctedUrl !== inputUrl.toLowerCase().trim() ? correctedUrl : null,
+        suggestions: suggestions.slice(0, 5),
+        hasSuggestions: suggestions.length > 0
+      };
+      
+    } catch (error) {
+      console.error('URL 자동 보정 실패:', error);
+      return {
+        inputUrl,
+        correctedUrl: null,
+        suggestions: [],
+        hasSuggestions: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * 사이트 성능 분석
+   */
+  async analyzeSitePerformance(siteId, days = 30) {
+    try {
+      const result = await pool.query(`
+        SELECT 
+          DATE(created_at) as date,
+          COUNT(*) as total_attempts,
+          SUM(CASE WHEN success THEN 1 ELSE 0 END) as successful_attempts,
+          AVG(rtt) as avg_rtt,
+          AVG(optimal_offset) as avg_offset
+        FROM access_logs 
+        WHERE site_id = $1 
+          AND created_at > CURRENT_DATE - INTERVAL '${days} days'
+        GROUP BY DATE(created_at)
+        ORDER BY date ASC
+      `, [siteId]);
+      
+      const dailyStats = result.rows.map(row => ({
+        date: row.date,
+        totalAttempts: parseInt(row.total_attempts),
+        successfulAttempts: parseInt(row.successful_attempts),
+        successRate: (parseInt(row.successful_attempts) / parseInt(row.total_attempts)) * 100,
+        avgRTT: parseFloat(row.avg_rtt) || 0,
+        avgOffset: parseFloat(row.avg_offset) || 0
+      }));
+      
+      // 전체 통계
+      const overallStats = await pool.query(`
+        SELECT 
+          COUNT(*) as total_attempts,
+          SUM(CASE WHEN success THEN 1 ELSE 0 END) as successful_attempts,
+          AVG(rtt) as avg_rtt,
+          MIN(rtt) as min_rtt,
+          MAX(rtt) as max_rtt,
+          AVG(optimal_offset) as avg_offset
+        FROM access_logs 
+        WHERE site_id = $1 
+          AND created_at > CURRENT_DATE - INTERVAL '${days} days'
+      `, [siteId]);
+      
+      const overall = overallStats.rows[0];
+      
+      return {
+        siteId,
+        period: `${days} days`,
+        dailyStats,
+        overall: {
+          totalAttempts: parseInt(overall.total_attempts) || 0,
+          successfulAttempts: parseInt(overall.successful_attempts) || 0,
+          successRate: overall.total_attempts > 0 
+            ? (parseInt(overall.successful_attempts) / parseInt(overall.total_attempts)) * 100 
+            : 0,
+          avgRTT: parseFloat(overall.avg_rtt) || 0,
+          minRTT: parseFloat(overall.min_rtt) || 0,
+          maxRTT: parseFloat(overall.max_rtt) || 0,
+          avgOffset: parseFloat(overall.avg_offset) || 0
+        },
+        analyzedAt: new Date().toISOString()
+      };
+      
+    } catch (error) {
+      console.error('사이트 성능 분석 실패:', error);
+      throw new Error('사이트 성능 분석을 수행할 수 없습니다');
+    }
+  }
+
+  /**
+   * 배치 사이트 추가 (CSV 등에서 대량 추가)
+   */
+  async bulkAddSites(sitesData, createdBy = null) {
+    const results = [];
+    const errors = [];
+    
+    for (let i = 0; i < sitesData.length; i++) {
+      try {
+        const site = await this.addSite(sitesData[i], createdBy);
+        results.push({ index: i, success: true, site });
+      } catch (error) {
+        errors.push({ 
+          index: i, 
+          success: false, 
+          error: error.message,
+          data: sitesData[i]
+        });
+      }
+    }
+    
+    return {
+      totalProcessed: sitesData.length,
+      successful: results.length,
+      failed: errors.length,
+      results,
+      errors
+    };
+  }
+}
+
+module.exports = SiteService;
