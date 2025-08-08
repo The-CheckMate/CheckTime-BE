@@ -11,9 +11,9 @@ const pool = new Pool({
 class SiteService {
   constructor() {
     this.similarityThreshold = 0.6; // 유사도 임계값
-    this.maxSearchResults = 10; // 최대 검색 결과 수
+    this.maxSearchResults = 1; // 최대 검색 결과 수
     this.discovery = new SiteDiscoveryService(); // 자동 발견 로직 수행
-    this.autoDiscoveryThreshold = 0.4; // 자동 발견을 위한 최소 유사도 임계값
+    this.autoDiscoveryThreshold = 0.9; // 자동 발견을 위한 최소 유사도 임계값
   }
 
   /**
@@ -105,10 +105,17 @@ class SiteService {
       // 3. 유사도 계산 및 검색 결과 생성
       const searchResults = [];
       let bestSimilarity = 0;
+      let bestMatch = null; // 최고 유사도 매치 추적
       
       for (const site of allSitesResult.rows) {
         const similarity = this.calculateSiteSimilarity(searchTerm, site);
         
+        // 최고 유사도 추적
+        if (similarity > bestSimilarity) {
+          bestSimilarity = similarity;
+          bestMatch = site;
+        }
+
         if (similarity >= this.similarityThreshold) {
           searchResults.push({
             ...site,
@@ -159,7 +166,7 @@ class SiteService {
       // 6. 자동 발견 로직 (기존 검색 결과가 없거나 유사도가 낮을 때)
       let discoveredSite = null;
       if(autoDiscover && bestSimilarity < this.autoDiscoveryThreshold){
-        console.log('자동 발견 시작: 최고 유사도 &{bestSimilarity} < ${this.autoDiscoveryThreshold}');
+        console.log(`자동 발견 시작: 최고 유사도 ${bestSimilarity} < ${this.autoDiscoveryThreshold}`);
 
         try{
           const discoveryResult = await this.discovery.discoverSiteUrl(searchTerm);
@@ -199,10 +206,25 @@ class SiteService {
           // 자동 발견 실패는 전체 검색을 중단하지 않음
         }
       }
+
+      // 자동 발견 실패 시 최고 유사도 결과라도 포함
+      if (searchResults.length === 0 && bestMatch) {
+        console.log('검색 결과가 없어서 최고 유사도 결과 포함');
+        searchResults.push({
+          ...bestMatch,
+          similarity: parseFloat(bestSimilarity.toFixed(3)),
+          matchReason: this.getMatchReason(searchTerm, bestMatch, bestSimilarity) + '_fallback'
+        });
+      }
+
       
-      // 6. 결과 정렬 및 제한
+      // 7. 결과 정렬 및 제한
       const sortedResults = searchResults
         .sort((a, b) => {
+          // 새로 발견된 것 최우선
+          if (a.isNewlyRegistered && !b.isNewlyRegistered) return -1;
+          if (!a.isNewlyRegistered && b.isNewlyRegistered) return 1;
+
           // 정확한 매치 우선
           if (a.similarity !== b.similarity) {
             return b.similarity - a.similarity;
@@ -225,10 +247,13 @@ class SiteService {
         totalFound: sortedResults.length,
         koreanMapping: koreanMappingResult,
         autoDiscovery: discoveredSite ? {
-        discovered: true,
-        newSite: discoveredSite,
-        source: discoveredSite.discovery_source
-        } : { discovered: false },
+          discovered: true,
+          newSite: discoveredSite,
+          source: discoveredSite.discovery_source
+        } : { 
+          discovered: false,
+          attempted : bestSimilarity<this.autoDiscoveryThreshold},
+        bestSimilarityFromDb: bestSimilarity,
         searchedAt: new Date().toISOString()
       };
       
@@ -257,10 +282,10 @@ class SiteService {
       
       const result = await pool.query(`
         INSERT INTO sites (
-          url, name, category, description, optimal_offset, keywords, 
-          created_by, discovery_source, discovery_confidence
+          url, name, category, description, optimal_offset, keywords, auto_discovered,
+          discovery_source, discovery_confidence, last_verified_at, created_by
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        VALUES ($1, $2, $3, $4, $5, $6, true, $7, $8, now(), $9)
         RETURNING *
       `, [
         siteData.url,
@@ -269,9 +294,9 @@ class SiteService {
         siteData.description,
         siteData.optimal_offset,
         siteData.keywords,
-        'auto_discovery', // created_by
         discoveryResult.source, // discovery_source
-        discoveryResult.confidence // discovery_confidence
+        discoveryResult.confidence, // discovery_confidence
+        null // created_by: 자동 발견은 사용자 정보가 없으므로 null
       ]);
       
       // 자동 등록 로그 기록
@@ -297,16 +322,13 @@ class SiteService {
   async logAutoDiscovery(searchTerm, discoveryResult, siteId) {
     try {
       await pool.query(`
-        INSERT INTO auto_discovery_logs (
-          search_term, discovered_url, discovery_source, 
-          confidence, site_id, created_at
+        INSERT INTO site_discovery_logs (
+          search_term, discovered_url, site_id, created_at
         )
-        VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
+        VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
       `, [
         searchTerm,
         discoveryResult.url,
-        discoveryResult.source,
-        discoveryResult.confidence,
         siteId
       ]);
     } catch (error) {
@@ -331,7 +353,7 @@ class SiteService {
     if (site.url) {
       const urlParts = this.extractUrlParts(site.url);
       for (const part of urlParts) {
-        const urlSimilarity = this.calculateStringSimilarity(term, part);
+        const urlSimilarity = this.calculateStringSimilarity(term, part) * 0.9; // URL 유사도는 10% 깎기
         maxSimilarity = Math.max(maxSimilarity, urlSimilarity);
       }
     }
@@ -353,8 +375,8 @@ class SiteService {
     
     // 4. 부분 문자열 매치 보너스
     const nameContains = nameNormalized.includes(term) || term.includes(nameNormalized);
-    if (nameContains && term.length >= 2) {
-      maxSimilarity = Math.max(maxSimilarity, 0.8);
+    if (nameContains && term.length >= 3) {
+      maxSimilarity = Math.max(maxSimilarity, 0.7);
     }
     
     return maxSimilarity;

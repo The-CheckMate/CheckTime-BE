@@ -40,7 +40,8 @@ router.get('/', [
 
 // 사이트 검색
 router.get('/search', [
-  query('q').notEmpty().withMessage('검색어를 입력해주세요')
+  query('q').notEmpty().withMessage('검색어를 입력해주세요'),
+  query('auto_discover').optional().isBoolean().withMessage('auto_discover는 boolean이어야 합니다')
 ], auth.optional, async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -51,9 +52,9 @@ router.get('/search', [
       });
     }
 
-    const { q: searchTerm } = req.query;
+    const { q: searchTerm, auto_discovery} = req.query;
     const userId = req.user?.id || null;
-    
+    const autoDiscover = auto_discovery === 'false' ? false : true;
     const result = await siteService.searchSites(searchTerm, userId);
     
     res.json({
