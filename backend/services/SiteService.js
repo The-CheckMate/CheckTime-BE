@@ -2,6 +2,7 @@
 const { Pool } = require('pg');
 const levenshtein = require('fast-levenshtein');
 const { URL } = require('url');
+const SiteDiscoveryService = require('./SiteDiscoveryService');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL
@@ -11,6 +12,8 @@ class SiteService {
   constructor() {
     this.similarityThreshold = 0.6; // 유사도 임계값
     this.maxSearchResults = 10; // 최대 검색 결과 수
+    this.discovery = new SiteDiscoveryService(); // 자동 발견 로직 수행
+    this.autoDiscoveryThreshold = 0.4; // 자동 발견을 위한 최소 유사도 임계값
   }
 
   /**
@@ -83,9 +86,9 @@ class SiteService {
   }
 
   /**
-   * 사이트 검색 (유사도 기반)
+   * 사이트 검색 (유사도 기반 + 자동 발견)
    */
-  async searchSites(searchTerm, userId = null) {
+  async searchSites(searchTerm, userId = null, autoDiscover = true) {
     try {
       console.log(`사이트 검색: "${searchTerm}"`);
       
@@ -101,6 +104,7 @@ class SiteService {
       
       // 3. 유사도 계산 및 검색 결과 생성
       const searchResults = [];
+      let bestSimilarity = 0;
       
       for (const site of allSitesResult.rows) {
         const similarity = this.calculateSiteSimilarity(searchTerm, site);
@@ -112,6 +116,8 @@ class SiteService {
             matchReason: this.getMatchReason(searchTerm, site, similarity)
           });
         }
+
+        bestSimilarity= Math.max(bestSimilarity, similarity);
       }
       
       // 4. 한글 도메인 매핑 결과 추가
@@ -126,6 +132,7 @@ class SiteService {
               similarity: 1.0,
               matchReason: 'korean_domain_mapping'
             });
+            bestSimilarity = 1.0;
           }
         }
       }
@@ -144,7 +151,52 @@ class SiteService {
               similarity: 1.0,
               matchReason: 'exact_url_match'
             });
+            bestSimilarity = 1.0;
           }
+        }
+      }
+
+      // 6. 자동 발견 로직 (기존 검색 결과가 없거나 유사도가 낮을 때)
+      let discoveredSite = null;
+      if(autoDiscover && bestSimilarity < this.autoDiscoveryThreshold){
+        console.log('자동 발견 시작: 최고 유사도 &{bestSimilarity} < ${this.autoDiscoveryThreshold}');
+
+        try{
+          const discoveryResult = await this.discovery.discoverSiteUrl(searchTerm);
+
+          if (discoveryResult && discoveryResult.url) {
+            console.log(`자동 발견 성공: ${discoveryResult.url}`);
+            
+            // 발견된 URL이 이미 DB에 있는지 확인
+            const existingSite = await this.getSiteByUrl(discoveryResult.url);
+            
+            if (existingSite) {
+              // 이미 존재하는 사이트면 검색 결과에 추가
+              console.log('발견된 URL이 이미 DB에 존재함');
+              searchResults.unshift({
+                ...existingSite,
+                similarity: 0.9,
+                matchReason: 'auto_discovered_existing'
+              });
+            } else {
+              // 새로운 사이트면 DB에 자동 등록
+              console.log('새로운 사이트 자동 등록 중...');
+              discoveredSite = await this.autoRegisterDiscoveredSite(discoveryResult, searchTerm);
+              
+              if (discoveredSite) {
+                searchResults.unshift({
+                  ...discoveredSite,
+                  similarity: 0.95,
+                  matchReason: 'auto_discovered_new',
+                  isNewlyRegistered: true
+                });
+                console.log(`새로운 사이트 자동 등록 완료: ${discoveredSite.name}`);
+              }
+            }
+          }
+        } catch (discoveryError) {
+          console.warn('자동 발견 실패:', discoveryError.message);
+          // 자동 발견 실패는 전체 검색을 중단하지 않음
         }
       }
       
@@ -172,12 +224,94 @@ class SiteService {
         results: sortedResults,
         totalFound: sortedResults.length,
         koreanMapping: koreanMappingResult,
+        autoDiscovery: discoveredSite ? {
+        discovered: true,
+        newSite: discoveredSite,
+        source: discoveredSite.discovery_source
+        } : { discovered: false },
         searchedAt: new Date().toISOString()
       };
       
     } catch (error) {
       console.error('사이트 검색 실패:', error);
       throw new Error('사이트 검색 중 오류가 발생했습니다');
+    }
+  }
+
+  /**
+   * 자동 발견된 사이트를 DB에 등록
+   */
+  async autoRegisterDiscoveredSite(discoveryResult, originalSearchTerm) {
+    try {
+      const siteData = {
+        url: discoveryResult.url,
+        name: discoveryResult.name || originalSearchTerm,
+        category: discoveryResult.category || 'general',
+        description: discoveryResult.description || `자동 발견된 사이트: ${originalSearchTerm}`,
+        optimal_offset: 2500,
+        keywords: [
+          originalSearchTerm,
+          ...(discoveryResult.keywords || [])
+        ].filter((k, i, arr) => arr.indexOf(k) === i) // 중복 제거
+      };
+      
+      const result = await pool.query(`
+        INSERT INTO sites (
+          url, name, category, description, optimal_offset, keywords, 
+          created_by, discovery_source, discovery_confidence
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        RETURNING *
+      `, [
+        siteData.url,
+        siteData.name,
+        siteData.category,
+        siteData.description,
+        siteData.optimal_offset,
+        siteData.keywords,
+        'auto_discovery', // created_by
+        discoveryResult.source, // discovery_source
+        discoveryResult.confidence // discovery_confidence
+      ]);
+      
+      // 자동 등록 로그 기록
+      await this.logAutoDiscovery(originalSearchTerm, discoveryResult, result.rows[0].id);
+      
+      return result.rows[0];
+      
+    } catch (error) {
+      console.error('자동 발견 사이트 등록 실패:', error);
+      
+      // 중복 URL 오류인 경우 기존 사이트 반환
+      if (error.message.includes('이미 등록된 사이트')) {
+        return await this.getSiteByUrl(discoveryResult.url);
+      }
+      
+      throw error;
+    }
+  }
+
+  /**
+   * 자동 발견 로그 기록
+   */
+  async logAutoDiscovery(searchTerm, discoveryResult, siteId) {
+    try {
+      await pool.query(`
+        INSERT INTO auto_discovery_logs (
+          search_term, discovered_url, discovery_source, 
+          confidence, site_id, created_at
+        )
+        VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
+      `, [
+        searchTerm,
+        discoveryResult.url,
+        discoveryResult.source,
+        discoveryResult.confidence,
+        siteId
+      ]);
+    } catch (error) {
+      console.warn('자동 발견 로그 기록 실패:', error.message);
+      // 로그 실패는 전체 프로세스를 중단하지 않음
     }
   }
 
