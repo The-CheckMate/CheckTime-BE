@@ -234,6 +234,13 @@ class SiteService {
       
       
       console.log(`검색 완료: ${sortedResults.length}개 결과 찾음`);
+
+      // 사용량 증가: 첫 번째 추천 사이트에 대해서만
+      if (sortedResults.length > 0) {
+        const firstSiteId = sortedResults[0].id;
+        await this.incrementUsage(firstSiteId);
+        console.log(`[incrementUsage] siteId=${firstSiteId}`);
+      }
       
       return {
         searchTerm,
