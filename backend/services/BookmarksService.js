@@ -159,14 +159,25 @@ class BookmarksService {
 
   // favicon 검사 후 URL 반환
   async fetchFaviconUrl(pageUrl) {
+    const timeoutMs = 2000; // 2초
+    let controller;
+    let timeoutId;
+
     try {
       const { origin } = new URL(pageUrl);
       const faviconUrl = `${origin}/favicon.ico`;
       //console.log(`[fetchFavicon] favicon URL 생성: faviconUrl=${faviconUrl}`);
 
-      const res = await fetch(faviconUrl, { method: 'HEAD' });
+      // AbortController 생성 및 타임아웃 설정
+      controller = new AbortController();
+      timeoutId = setTimeout(() => {
+        controller.abort();
+      }, timeoutMs);
+
+      const res = await fetch(faviconUrl, { method: 'HEAD', signal: controller.signal });
       //console.log(`[fetchFavicon] HTTP 상태 코드: ${res.status}, res.ok=${res.ok}`);
-      
+      clearTimeout(timeoutId);
+
       const contentType = res.headers.get('content-type') || '';
       //console.log(`[fetchFavicon] Content-Type 확인: ${contentType}`);
 
@@ -176,6 +187,8 @@ class BookmarksService {
     } catch(err) {
       console.error(`[fetchFavicon] 예외 발생: ${err.message}`);
       // 무시하고 null 반환
+    }finally {
+      if (timeoutId) clearTimeout(timeoutId);
     }
     return null;
   }
