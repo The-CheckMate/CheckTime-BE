@@ -277,7 +277,7 @@ class SiteService {
     if (site.url) {
       const urlParts = this.extractUrlParts(site.url);
       for (const part of urlParts) {
-        const urlSimilarity = this.calculateStringSimilarity(term, part);
+        const urlSimilarity = this.calculateStringSimilarity(term, part) * 0.9 ; // url 유사도 10% 줄이기
         maxSimilarity = Math.max(maxSimilarity, urlSimilarity);
       }
     }
@@ -299,8 +299,8 @@ class SiteService {
     
     // 4. 부분 문자열 매치 보너스
     const nameContains = nameNormalized.includes(term) || term.includes(nameNormalized);
-    if (nameContains && term.length >= 2) {
-      maxSimilarity = Math.max(maxSimilarity, 0.8);
+    if (nameContains && term.length >= 3) {
+      maxSimilarity = Math.max(maxSimilarity, 0.7);
     }
     
     return maxSimilarity;
@@ -1023,7 +1023,7 @@ class SiteService {
       // 로그 실패는 전체 프로세스를 중단하지 않음
     }
   }
-  
+
 }
 
 module.exports = SiteService;
