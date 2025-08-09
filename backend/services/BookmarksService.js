@@ -131,7 +131,7 @@ class BookmarksService {
     if (!res.rows.length) {
       throw new Error('수정할 북마크를 찾을 수 없습니다');
     }
-    return res.rows;
+    return res.rows[0];
   }
 
   async getUrlById(userId, bookmarkId) {
