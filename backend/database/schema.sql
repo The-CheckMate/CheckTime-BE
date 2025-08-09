@@ -207,8 +207,8 @@ DROP TABLE IF EXISTS user_favorites CASCADE;
 CREATE TABLE user_bookmarks (
     id SERIAL PRIMARY KEY,
     user_id    INTEGER NOT NULL REFERENCES users(id),
-    name       VARCHAR(200) NOT NULL,           -- 사용자가 지정한 북마크명
-    url        VARCHAR(500) NOT NULL,           -- 북마크한 URL
+    custom_name       VARCHAR(200) NOT NULL,           -- 사용자가 지정한 북마크명
+    custom_url        VARCHAR(500) NOT NULL,           -- 북마크한 URL
     favicon    VARCHAR(500),                    -- 파비콘 URL (옵션)
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
