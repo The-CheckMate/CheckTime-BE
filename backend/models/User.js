@@ -216,49 +216,6 @@ class User {
     return true;
   }
 
-  /**
-   * 사용자 즐겨찾기 사이트 조회
-   */
-  async getFavorites() {
-    const query = `
-      SELECT s.id, s.url, s.name, s.category, s.optimal_offset, uf.created_at as favorited_at
-      FROM user_favorites uf
-      JOIN sites s ON uf.site_id = s.id
-      WHERE uf.user_id = $1
-      ORDER BY uf.created_at DESC
-    `;
-
-    const result = await pool.query(query, [this.id]);
-    return result.rows;
-  }
-
-  /**
-   * 즐겨찾기 추가
-   */
-  async addFavorite(siteId) {
-    const query = `
-      INSERT INTO user_favorites (user_id, site_id)
-      VALUES ($1, $2)
-      ON CONFLICT (user_id, site_id) DO NOTHING
-      RETURNING *
-    `;
-
-    const result = await pool.query(query, [this.id, siteId]);
-    return result.rows.length > 0;
-  }
-
-  /**
-   * 즐겨찾기 제거
-   */
-  async removeFavorite(siteId) {
-    const query = `
-      DELETE FROM user_favorites
-      WHERE user_id = $1 AND site_id = $2
-    `;
-
-    const result = await pool.query(query, [this.id, siteId]);
-    return result.rowCount > 0;
-  }
 
   /**
    * 사용자 접속 기록 조회

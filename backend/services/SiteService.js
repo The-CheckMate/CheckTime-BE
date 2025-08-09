@@ -88,7 +88,7 @@ class SiteService {
   /**
    * 사이트 검색 (유사도 기반 + 자동 발견)
    */
-  async searchSites(searchTerm, userId = null, autoDiscover=true) {
+  async searchSites(searchTerm, autoDiscover=true) {
     try {
       console.log(`사이트 검색: "${searchTerm}"`);
       
@@ -232,10 +232,6 @@ class SiteService {
         })
         .slice(0, this.maxSearchResults);
       
-      // 8. 사용자 즐겨찾기 정보 추가
-      if (userId) {
-        await this.addUserFavoriteInfo(sortedResults, userId);
-      }
       
       console.log(`검색 완료: ${sortedResults.length}개 결과 찾음`);
       
@@ -614,145 +610,6 @@ class SiteService {
     } catch (error) {
       console.error('카테고리 목록 조회 실패:', error);
       throw new Error('카테고리 목록을 불러올 수 없습니다');
-    }
-  }
-
-  /**
-   * 사용자 즐겨찾기 정보 추가
-   */
-  async addUserFavoriteInfo(sites, userId) {
-    try {
-      const siteIds = sites.map(s => s.id).filter(id => id);
-      
-      if (siteIds.length === 0) return;
-      
-      const favResult = await pool.query(`
-        SELECT site_id, custom_name, custom_offset, notification_enabled
-        FROM user_favorites 
-        WHERE user_id = $1 AND site_id = ANY($2)
-      `, [userId, siteIds]);
-      
-      const favorites = new Map();
-      favResult.rows.forEach(fav => {
-        favorites.set(fav.site_id, fav);
-      });
-      
-      sites.forEach(site => {
-        const favInfo = favorites.get(site.id);
-        site.isFavorite = !!favInfo;
-        if (favInfo) {
-          site.favoriteInfo = {
-            customName: favInfo.custom_name,
-            customOffset: favInfo.custom_offset,
-            notificationEnabled: favInfo.notification_enabled
-          };
-        }
-      });
-      
-    } catch (error) {
-      console.error('즐겨찾기 정보 추가 실패:', error);
-      // 에러가 발생해도 검색 결과는 반환
-    }
-  }
-
-  /**
-   * 즐겨찾기 추가
-   */
-  async addToFavorites(userId, siteId, customName = null, customOffset = null) {
-    try {
-      // 사이트 존재 확인
-      const siteResult = await pool.query(
-        'SELECT * FROM sites WHERE id = $1 AND is_active = true',
-        [siteId]
-      );
-      
-      if (siteResult.rows.length === 0) {
-        throw new Error('사이트를 찾을 수 없습니다');
-      }
-      
-      // 중복 확인
-      const existingFav = await pool.query(
-        'SELECT * FROM user_favorites WHERE user_id = $1 AND site_id = $2',
-        [userId, siteId]
-      );
-      
-      if (existingFav.rows.length > 0) {
-        throw new Error('이미 즐겨찾기에 추가된 사이트입니다');
-      }
-      
-      const result = await pool.query(`
-        INSERT INTO user_favorites (user_id, site_id, custom_name, custom_offset)
-        VALUES ($1, $2, $3, $4)
-        RETURNING *
-      `, [userId, siteId, customName, customOffset]);
-      
-      return result.rows[0];
-      
-    } catch (error) {
-      console.error('즐겨찾기 추가 실패:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * 즐겨찾기 제거
-   */
-  async removeFromFavorites(userId, siteId) {
-    try {
-      const result = await pool.query(`
-        DELETE FROM user_favorites 
-        WHERE user_id = $1 AND site_id = $2
-        RETURNING *
-      `, [userId, siteId]);
-      
-      if (result.rows.length === 0) {
-        throw new Error('즐겨찾기에서 찾을 수 없습니다');
-      }
-      
-      return { success: true, message: '즐겨찾기에서 제거되었습니다' };
-      
-    } catch (error) {
-      console.error('즐겨찾기 제거 실패:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * 사용자 즐겨찾기 목록 조회
-   */
-  async getUserFavorites(userId) {
-    try {
-      const result = await pool.query(`
-        SELECT 
-          uf.*,
-          s.url, s.name, s.category, s.optimal_offset,
-          s.usage_count, s.success_rate, s.average_rtt
-        FROM user_favorites uf
-        JOIN sites s ON uf.site_id = s.id
-        WHERE uf.user_id = $1 AND s.is_active = true
-        ORDER BY uf.created_at DESC
-      `, [userId]);
-      
-      return result.rows.map(row => ({
-        id: row.id,
-        siteId: row.site_id,
-        customName: row.custom_name || row.name,
-        customOffset: row.custom_offset || row.optimal_offset,
-        notificationEnabled: row.notification_enabled,
-        site: {
-          url: row.url,
-          name: row.name,
-          category: row.category,
-          usageCount: row.usage_count,
-          successRate: row.success_rate,
-          averageRTT: row.average_rtt
-        },
-        addedAt: row.created_at
-      }));
-      
-    } catch (error) {
-      console.error('즐겨찾기 목록 조회 실패:', error);
-      throw new Error('즐겨찾기 목록을 불러올 수 없습니다');
     }
   }
 

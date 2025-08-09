@@ -179,23 +179,5 @@ router.put('/password', auth.required, [
   }
 });
 
-// 즐겨찾기 목록 조회
-router.get('/favorites', auth.required, async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const siteService = new (require('../services/SiteService'))();
-    const favorites = await siteService.getUserFavorites(userId);
-    
-    res.json({
-      success: true,
-      data: favorites
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
 
 module.exports = router;

@@ -55,7 +55,7 @@ CREATE TABLE access_logs (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 사용자 즐겨찾기 테이블
+-- 사용자 즐겨찾기 테이블 <<<<<<<<<<< 불필요한 테이블 (8/9 이후로 설정 안 해도 됩니다!)
 CREATE TABLE user_favorites (
     id SERIAL PRIMARY KEY,
     user_id INTEGER REFERENCES users(id),
@@ -196,3 +196,9 @@ INSERT INTO korean_domain_mappings (korean_name, actual_url, domain, category, v
 ('네이버', 'https://www.naver.com', 'naver.com', '포털', true),
 ('다음', 'https://www.daum.net', 'daum.net', '포털', true),
 ('구글', 'https://www.google.com', 'google.com', '포털', true);
+
+-------------------------------------------------
+--- 북마크 기능을 위한 스키마 수정 ---
+-------------------------------------------------
+-- user_favorites 테이블 삭제
+DROP TABLE IF EXISTS user_favorites CASCADE;
