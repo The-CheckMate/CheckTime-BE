@@ -91,14 +91,16 @@ class BookmarksService {
 
   // 수정
   async update(userId, bookmarkId, custom_name, custom_url, favicon) {
-    // URL 중복 검사 (다른 레코드와)
-    const dupRes = await pool.query(
-      `SELECT 1 FROM user_bookmarks
-       WHERE user_id = $1 AND custom_url = $2 AND id <> $3`,
-      [userId, custom_url, bookmarkId]
-    );
-    if (dupRes.rows.length) {
-      throw new Error('다른 북마크와 URL이 중복됩니다');
+    // custom_url이 전달된 경우에만 URL 중복 검사
+    if (custom_url !== undefined) {
+      const dupRes = await pool.query(
+        `SELECT 1 FROM user_bookmarks
+        WHERE user_id = $1 AND custom_url = $2 AND id <> $3`,
+        [userId, custom_url, bookmarkId]
+      );
+      if (dupRes.rows.length) {
+        throw new Error('다른 북마크와 URL이 중복됩니다');
+      }
     }
 
     const fields = [];
@@ -134,6 +136,7 @@ class BookmarksService {
     return res.rows[0];
   }
 
+  // bookmarkId로 URL 가져오기
   async getUrlById(userId, bookmarkId) {
     const res = await pool.query(
       `SELECT custom_url 
