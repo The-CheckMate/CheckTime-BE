@@ -133,3 +133,66 @@ INSERT INTO domain_mappings (korean_name, actual_url, similarity_threshold) VALU
 ('무신사', 'https://www.musinsa.com', 0.8),
 ('예스24', 'https://www.yes24.com', 0.7),
 ('지마켓', 'https://www.gmarket.co.kr', 0.7);
+
+-------------------------------------------------
+--- 사이트 자동 발견 및 등록 기능을 위한 스키마 수정 ---
+-------------------------------------------------
+
+-- sites 테이블에 자동 발견 관련 컬럼 추가
+ALTER TABLE sites 
+ADD COLUMN auto_discovered BOOLEAN DEFAULT FALSE,
+ADD COLUMN discovery_source VARCHAR(50),
+ADD COLUMN discovery_confidence DECIMAL(3,2) DEFAULT 0.00,
+ADD COLUMN last_verified_at TIMESTAMP;
+
+-- 인덱스 생성 (성능 최적화)
+CREATE INDEX idx_sites_auto_discovered ON sites(auto_discovered);
+CREATE INDEX idx_sites_discovery_source ON sites(discovery_source);
+
+-- 사이트 발견 시도 및 결과를 기록하는 테이블
+CREATE TABLE site_discovery_logs (
+    id SERIAL PRIMARY KEY,
+    search_term VARCHAR(255) NOT NULL,
+    discovered_url VARCHAR(500),
+    discovery_method VARCHAR(50),
+    confidence_score DECIMAL(3,2),
+    site_id INTEGER REFERENCES sites(id),
+    user_id INTEGER REFERENCES users(id),
+    success BOOLEAN DEFAULT FALSE,
+    error_message TEXT,
+    response_time_ms INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 로그 테이블 인덱스 생성
+CREATE INDEX idx_discovery_search_term ON site_discovery_logs(search_term);
+CREATE INDEX idx_discovery_success ON site_discovery_logs(success);
+CREATE INDEX idx_discovery_created_at ON site_discovery_logs(created_at);
+
+-- 한글 검색어를 실제 도메인으로 매핑하는 테이블
+CREATE TABLE korean_domain_mappings (
+    id SERIAL PRIMARY KEY,
+    korean_name VARCHAR(100) NOT NULL UNIQUE,
+    actual_url VARCHAR(500) NOT NULL,
+    domain VARCHAR(255) NOT NULL,
+    category VARCHAR(100) DEFAULT 'general',
+    similarity_threshold DECIMAL(3,2) DEFAULT 0.80,
+    verified BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 매핑 테이블 인덱스
+CREATE INDEX idx_korean_mappings_name ON korean_domain_mappings(korean_name);
+CREATE INDEX idx_korean_mappings_verified ON korean_domain_mappings(verified);
+
+-- 기본 매핑 데이터 삽입
+INSERT INTO korean_domain_mappings (korean_name, actual_url, domain, category, verified) VALUES
+('서울대', 'https://www.snu.ac.kr', 'snu.ac.kr', '교육기관', true),
+('서울대학교', 'https://www.snu.ac.kr', 'snu.ac.kr', '교육기관', true),
+('연세대', 'https://www.yonsei.ac.kr', 'yonsei.ac.kr', '교육기관', true),
+('고려대', 'https://www.korea.edu', 'korea.edu', '교육기관', true),
+('카이스트', 'https://www.kaist.ac.kr', 'kaist.ac.kr', '교육기관', true),
+('네이버', 'https://www.naver.com', 'naver.com', '포털', true),
+('다음', 'https://www.daum.net', 'daum.net', '포털', true),
+('구글', 'https://www.google.com', 'google.com', '포털', true);
