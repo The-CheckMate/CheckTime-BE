@@ -47,6 +47,9 @@ const authRoutes = require("./routes/authRoutes");
 app.use("/api/auth", authRoutes);
 const statsRoutes = require("./routes/statsRoutes");
 app.use("/api/stats", statsRoutes);
+const bookmarksRoutes = require('./routes/bookmarksRoutes');
+app.use('/api/bookmarks', bookmarksRoutes);
+
 
 app.get("/health", (req, res) => {
   res.json({ status: "OK" });
