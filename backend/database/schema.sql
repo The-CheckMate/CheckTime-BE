@@ -212,7 +212,7 @@ CREATE TABLE user_bookmarks (
     favicon    VARCHAR(500),                    -- 파비콘 URL (옵션)
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(user_id, url)                        -- 사용자 당 URL 중복 방지
+    UNIQUE(user_id, custom_url)                        -- 사용자 당 URL 중복 방지
 );
 
 -- updated_at 자동 갱신 트리거
