@@ -134,6 +134,19 @@ class BookmarksService {
     return res.rows;
   }
 
+  async getUrlById(userId, bookmarkId) {
+    const res = await pool.query(
+      `SELECT custom_url 
+         FROM user_bookmarks 
+        WHERE id = $1 AND user_id = $2`,
+      [bookmarkId, userId]
+    );
+    if (res.rows.length === 0) {
+      throw new Error('해당 북마크를 찾을 수 없습니다');
+    }
+    return res.rows[0].custom_url;
+  }
+
   // 파비콘 업데이트 (옵션): URL에서 파비콘 크롤링 후 저장
   async saveFavicon(bookmarkId, faviconUrl) {
     await pool.query(
