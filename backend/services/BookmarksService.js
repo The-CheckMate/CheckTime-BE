@@ -93,6 +93,10 @@ class BookmarksService {
   async update(userId, bookmarkId, custom_name, custom_url, favicon) {
     // custom_url이 전달된 경우에만 URL 중복 검사
     if (custom_url !== undefined) {
+      // 빈 문자열 검사
+      if (custom_url.trim() === '') {
+        throw new Error('URL은 빈 문자열이 될 수 없습니다');
+      }
       const dupRes = await pool.query(
         `SELECT 1 FROM user_bookmarks
         WHERE user_id = $1 AND custom_url = $2 AND id <> $3`,
