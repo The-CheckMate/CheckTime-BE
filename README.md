@@ -10,11 +10,14 @@ $ npm run dev
     -  notification_enabled 북마크 알림 관련 기능 제거
     - favicon(페이지 대표 이미지) 추가 예정
     -  사용자 설정 필요
-        ```
+        ```sql
         DROP TABLE IF EXISTS user_favorites CASCADE;
         ```
 2. user_bookmarks 관련 기능 추가
     - 사용자 설정 필요
+        ```
+        npm install node-fetch
+        ```
         ```sql
         CREATE TABLE user_bookmarks (
         id SERIAL PRIMARY KEY,
@@ -33,5 +36,9 @@ $ npm run dev
         FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
         ```
 ## 테스트
-    
-    
+- 사전 로그인 상태 필요 (Auth)
+- 북마크 목록 조회 | GET http://localhost:3001/api/bookmarks
+- 북마크 추가 | POST http://localhost:3001/api/bookmarks / body 작성
+- 북마크 수정 | PUT http://localhost:3001/api/bookmarks/1 / body 작성
+- 북마크 삭제 | DELETE http://localhost:3001/api/bookmarks/1
+- 북마크 클릭 | GET http://localhost:3001/api/bookmarks/1/click
