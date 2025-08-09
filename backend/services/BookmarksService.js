@@ -83,7 +83,7 @@ class BookmarksService {
       vals.push(custom_name);
     }
     if (custom_url !== undefined) {
-      fields.push(`url = $${idx++}`);
+      fields.push(`custom_url = $${idx++}`);
       vals.push(custom_url);
     }
     if (favicon !== undefined) {
