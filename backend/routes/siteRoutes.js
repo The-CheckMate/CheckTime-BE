@@ -53,9 +53,8 @@ router.get('/search', [
     }
 
     const { q: searchTerm, auto_discovery } = req.query;
-    const userId = req.user?.id || null;
     const autoDiscover = auto_discovery === 'false' ? false : true;
-    const result = await siteService.searchSites(searchTerm, userId);
+    const result = await siteService.searchSites(searchTerm, autoDiscover);
     
     res.json({
       success: true,
@@ -258,57 +257,6 @@ router.get('/:id/performance', [
     });
   } catch (error) {
     res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// 즐겨찾기 관련 라우트
-router.post('/:id/favorite', auth.required, [
-  body('customName').optional().isString().withMessage('커스텀 이름은 문자열이어야 합니다'),
-  body('customOffset').optional().isInt({ min: 500, max: 10000 }).withMessage('커스텀 오프셋은 500-10000ms 사이여야 합니다')
-], async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        errors: errors.array()
-      });
-    }
-
-    const { id } = req.params;
-    const { customName, customOffset } = req.body;
-    const userId = req.user.id;
-    
-    const result = await siteService.addToFavorites(userId, parseInt(id), customName, customOffset);
-    
-    res.status(201).json({
-      success: true,
-      data: result
-    });
-  } catch (error) {
-    res.status(400).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-router.delete('/:id/favorite', auth.required, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const userId = req.user.id;
-    
-    const result = await siteService.removeFromFavorites(userId, parseInt(id));
-    
-    res.json({
-      success: true,
-      data: result
-    });
-  } catch (error) {
-    res.status(400).json({
       success: false,
       error: error.message
     });
