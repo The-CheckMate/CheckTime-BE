@@ -1,4 +1,7 @@
 const { Pool } = require('pg');
+const fetch = require('node-fetch').default;    // favicon 검사용
+const { URL } = require('url');
+
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 class BookmarksService {
@@ -38,14 +41,38 @@ class BookmarksService {
       throw new Error('이미 저장된 URL입니다');
     }
 
-    // 저장 (favicon은 옵션)
+    // 1) 레코드 삽입 (favicon 칼럼은 일단 NULL로)
     const insertRes = await pool.query(
       `INSERT INTO user_bookmarks (user_id, custom_name, custom_url, favicon)
        VALUES ($1, $2, $3, $4)
        RETURNING *`,
       [userId, custom_name, custom_url, favicon || null]
     );
-    return insertRes.rows[0];
+    const bookmarkId = insertRes.rows[0].id;
+
+    //console.log(`[add] 추가된 북마크 ID: ${bookmarkId}`);
+
+    // 2) favicon 자동 탐색
+    const autoFavicon = await this.fetchFaviconUrl(custom_url);
+    //console.log(`[add] autoFavicon: ${autoFavicon}`);
+    if (autoFavicon) {
+      await pool.query(
+        `UPDATE user_bookmarks
+           SET favicon = $1
+         WHERE id = $2`,
+        [autoFavicon, bookmarkId]
+      );
+    }
+
+    // 3) 최종 레코드 조회 및 반환
+    const finalRes = await pool.query(
+      `SELECT id, custom_name, custom_url, favicon, created_at
+         FROM user_bookmarks
+        WHERE id = $1`,
+      [bookmarkId]
+    );
+
+    return finalRes.rows[0];
   }
 
   // 삭제
@@ -115,6 +142,29 @@ class BookmarksService {
        WHERE id = $2`,
       [faviconUrl, bookmarkId]
     );
+  }
+
+  // favicon 검사 후 URL 반환
+  async fetchFaviconUrl(pageUrl) {
+    try {
+      const { origin } = new URL(pageUrl);
+      const faviconUrl = `${origin}/favicon.ico`;
+      //console.log(`[fetchFavicon] favicon URL 생성: faviconUrl=${faviconUrl}`);
+
+      const res = await fetch(faviconUrl, { method: 'HEAD' });
+      //console.log(`[fetchFavicon] HTTP 상태 코드: ${res.status}, res.ok=${res.ok}`);
+      
+      const contentType = res.headers.get('content-type') || '';
+      //console.log(`[fetchFavicon] Content-Type 확인: ${contentType}`);
+
+      if (res.ok && contentType.includes('image/')) {
+        return faviconUrl;
+      }
+    } catch(err) {
+      console.error(`[fetchFavicon] 예외 발생: ${err.message}`);
+      // 무시하고 null 반환
+    }
+    return null;
   }
 
 }
