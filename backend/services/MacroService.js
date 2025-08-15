@@ -63,51 +63,47 @@ class MacroService {
      * 특정 매크로 작업 실행
      */
     async executeMacro(taskId) {
-        try {
-            const task = await this.getTaskById(taskId);
-            if (!task) {
-                throw new Error('Task not found');
-            }
-
-            if (task.status !== 'scheduled') {
-                throw new Error(`Task is not schedulable. Current status: ${task.status}`);
-            }
-
-            // 상태를 실행 중으로 변경
-            await this.updateTaskStatus(taskId, 'running');
-
-            const settings = JSON.parse(task.settings || '{}');
-            const result = await this.performMacroAction(
-                task.target_url, 
-                task.macro_type, 
-                settings
-            );
-
-            if (result.success) {
-                // 성공 결과 저장
-                await this.updateTaskStatus(taskId, 'completed', result);
-                await this.logExecution(taskId, task, true, result.responseTime, result);
-                return { success: true, result };
-            } else {
-                // 실패 결과 저장  
-                await this.updateTaskStatus(taskId, 'failed', null, result.error);
-                await this.logExecution(taskId, task, false, result.responseTime, null, result.error);
-                throw new Error(result.error);
-            }
-        } catch (error) {
-            console.error(`매크로 실행 오류 (Task ID: ${taskId}):`, error);
-            
-            // 실패 상태로 업데이트
-            try {
-                await this.updateTaskStatus(taskId, 'failed', null, error.message);
-            } catch (updateError) {
-                console.error('상태 업데이트 실패:', updateError);
-            }
-            
-            throw error;
+    try {
+        const task = await this.getTaskById(taskId);
+        if (!task || task.status !== 'scheduled') {
+            throw new Error(`Task not found or not schedulable`);
         }
-    }
 
+        await this.updateTaskStatus(taskId, 'running');
+
+        const settings = typeof task.settings === 'string' 
+            ? JSON.parse(task.settings) 
+            : (task.settings || {});
+        const result = await this.performMacroAction(
+            task.target_url, 
+            task.macro_type, 
+            settings
+        );
+
+        if (result.success) {
+            // 🔧 안전한 결과 저장
+            await this.updateTaskStatus(taskId, 'completed', result);
+            await this.logExecution(taskId, task, true, result.responseTime, result);
+            return { success: true, result };
+        } else {
+            // 🔧 안전한 실패 저장  
+            await this.updateTaskStatus(taskId, 'failed', null, result.error);
+            await this.logExecution(taskId, task, false, result.responseTime, null, result.error);
+            throw new Error(result.error);
+        }
+    } catch (error) {
+        console.error(`매크로 실행 오류 (Task ID: ${taskId}):`, error);
+        
+        // 🔧 안전한 에러 저장
+        try {
+            await this.updateTaskStatus(taskId, 'failed', null, error.message);
+        } catch (updateError) {
+            console.error('상태 업데이트 실패:', updateError);
+        }
+        
+        throw error;
+    }
+}
     /**
      * 실제 매크로 동작 수행
      */
@@ -539,19 +535,27 @@ class MacroService {
      */
     async updateTaskStatus(taskId, status, resultData = null, errorMessage = null) {
         try {
+            console.log('🔍 updateTaskStatus 호출:', { taskId, status, resultData: typeof resultData });
+            
+            let safeResultData = null;
+            if (resultData !== null && resultData !== undefined) {
+                if (typeof resultData === 'object') {
+                    safeResultData = JSON.stringify(resultData);
+                } else {
+                    safeResultData = String(resultData);
+                }
+            }
+            
             await this.pool.query(`
                 UPDATE macro_tasks 
                 SET status = $1, executed_at = CURRENT_TIMESTAMP, 
                     result_data = $2, error_message = $3
                 WHERE id = $4
-            `, [
-                status, 
-                resultData ? JSON.stringify(resultData) : null, 
-                errorMessage, 
-                taskId
-            ]);
+            `, [status, safeResultData, errorMessage, taskId]);
+            
+            console.log('✅ updateTaskStatus 성공');
         } catch (error) {
-            console.error('작업 상태 업데이트 오류:', error);
+            console.error('❌ updateTaskStatus 실패:', error);
             throw error;
         }
     }
@@ -561,6 +565,23 @@ class MacroService {
      */
     async logExecution(taskId, task, success, responseTime, resultData, errorMessage = null) {
         try {
+            // 디버깅용 로그 추가
+            console.log('🔍 logExecution 호출됨:');
+            console.log('  resultData type:', typeof resultData);
+            console.log('  resultData value:', resultData);
+            
+            // 안전한 JSON 변환
+            let safeResultData = null;
+            if (resultData) {
+                if (typeof resultData === 'string') {
+                    safeResultData = resultData;
+                } else if (typeof resultData === 'object') {
+                    safeResultData = JSON.stringify(resultData);
+                } else {
+                    safeResultData = String(resultData);
+                }
+            }
+            
             await this.pool.query(`
                 INSERT INTO macro_execution_logs (
                     task_id, user_id, target_url, macro_type, success, 
@@ -573,11 +594,12 @@ class MacroService {
                 task.macro_type, 
                 success, 
                 responseTime, 
-                resultData ? JSON.stringify(resultData) : null, 
+                safeResultData,  // 안전하게 변환된 데이터
                 errorMessage
             ]);
         } catch (error) {
-            console.error('실행 로그 기록 오류:', error);
+            console.error('로그 기록 오류:', error);
+            console.error('전달받은 데이터:', { taskId, success, responseTime, resultData, errorMessage });
             // 로그 기록 실패는 전체 프로세스를 중단시키지 않음
         }
     }
