@@ -128,13 +128,6 @@ LIMIT 10;
 SELECT * FROM macro_tasks WHERE id = 2;
 ```
 
-![예약된 작업들](%EB%A7%A4%ED%81%AC%EB%A1%9C%202493bebba8ba80b89f68f13e64e84c61/Screenshot_2025-08-08_at_5.32.54_pm.png)
-
-예약된 작업들
-
-![실행 로그들](%EB%A7%A4%ED%81%AC%EB%A1%9C%202493bebba8ba80b89f68f13e64e84c61/Screenshot_2025-08-08_at_5.33.32_pm.png)
-
-실행 로그들
 
 ### [API 엔드포인트 및 구현]
 
