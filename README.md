@@ -6,6 +6,7 @@ $ npm run dev
 
 ## 📍notice
 - 인기 사이트 조회 기능 추가
+- 티켓팅 사이트 수동으로 삽입 필요(sql 쿼리 업데이트 예정)
 
 ## 테스트
 - database/schema.sql 226행~ 실행
