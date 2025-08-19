@@ -317,9 +317,14 @@ CREATE INDEX IF NOT EXISTS idx_macro_tasks_scheduled_time
     ON macro_tasks(optimal_refresh_time) 
     WHERE status = 'scheduled';
 
+-- current_timestamp 불변속성이라  IMMUTABLE 특성 에러 발생
+-- CREATE INDEX IF NOT EXISTS idx_macro_logs_recent_success 
+--     ON macro_execution_logs(executed_at, response_time) 
+--     WHERE success = true AND executed_at > CURRENT_TIMESTAMP - INTERVAL '7 days';
+
 CREATE INDEX IF NOT EXISTS idx_macro_logs_recent_success 
     ON macro_execution_logs(executed_at, response_time) 
-    WHERE success = true AND executed_at > CURRENT_TIMESTAMP - INTERVAL '7 days';
+    WHERE success = true;
 
 -- =====================================
 -- 11. 데이터 검증 및 제약 조건
