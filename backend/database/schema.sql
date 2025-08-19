@@ -219,3 +219,17 @@ CREATE TABLE user_bookmarks (
 CREATE TRIGGER trg_user_bookmarks_updated_at
   BEFORE UPDATE ON user_bookmarks
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-------------------------------------------------
+--- 인기 사이트 기능을 위한 스키마 수정 ---
+-------------------------------------------------
+CREATE TABLE IF NOT EXISTS popular_site_clicks (
+    id SERIAL PRIMARY KEY,
+    site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+    category VARCHAR(100) NOT NULL DEFAULT 'general',
+    clicked_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_popular_site_clicks_time ON popular_site_clicks (clicked_at);
+CREATE INDEX idx_popular_site_clicks_category ON popular_site_clicks (category);
+CREATE INDEX idx_popular_site_clicks_time_category ON popular_site_clicks (clicked_at, category);

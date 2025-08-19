@@ -2,6 +2,7 @@
 const { Pool } = require('pg');
 const levenshtein = require('fast-levenshtein');
 const SiteDiscoveryService = require('./SiteDiscoveryService');
+const popularService = require('./PopularSiteService'); 
 const { URL } = require('url');
 
 const pool = new Pool({
@@ -235,12 +236,17 @@ class SiteService {
       
       console.log(`검색 완료: ${sortedResults.length}개 결과 찾음`);
 
-      // 사용량 증가: 첫 번째 추천 사이트에 대해서만
+      // // 사용량 증가: 첫 번째 추천 사이트에 대해서만
+      // if (sortedResults.length > 0) {
+      //   const firstSiteId = sortedResults[0].id;
+      //   await this.incrementUsage(firstSiteId);
+      //   console.log(`[incrementUsage] siteId=${firstSiteId}`);
+      // }
       if (sortedResults.length > 0) {
-        const firstSiteId = sortedResults[0].id;
-        await this.incrementUsage(firstSiteId);
-        console.log(`[incrementUsage] siteId=${firstSiteId}`);
-      }
+            const firstSite = sortedResults[0];
+            await this.incrementUsage(firstSite.id, firstSite.category); // 카테고리 정보 추가
+            console.log(`[incrementUsage] siteId=${firstSite.id}, category=${firstSite.category}`);
+        }
       
       return {
         searchTerm,
@@ -633,17 +639,23 @@ class SiteService {
   }
 
   /**
-   * 사이트 사용량 증가
+   * 사이트 사용량 증가 및 인기 링크 로그 기록
+   * @param {number} siteId - 클릭된 사이트의 ID
+   * @param {string} category - 사이트의 카테고리
    */
-  async incrementUsage(siteId) {
+  async incrementUsage(siteId, category) {
     try {
+      // 인기 링크 로그 기록 (PopularSiteService 사용)
+      await popularService.logClick(siteId, category);
+
+      // 기존 usage_count 증가 (전체 기간 인기 순위용)
       await pool.query(`
         UPDATE sites 
         SET usage_count = usage_count + 1, updated_at = CURRENT_TIMESTAMP
         WHERE id = $1
       `, [siteId]);
     } catch (error) {
-      console.error('사이트 사용량 증가 실패:', error);
+      console.error('사이트 사용량 증가 및 로그 기록 실패:', error);
     }
   }
 
