@@ -120,7 +120,7 @@ CREATE TRIGGER update_sites_updated_at BEFORE UPDATE ON sites
 
 -- 초기 데이터 삽입
 INSERT INTO sites (url, name, category, optimal_offset, keywords) VALUES
-('https://sugang.ssu.ac.kr', '숭실대학교 수강신청', '수강신청', 2500, ARRAY['숭실대', '수강신청', 'SSU']),
+('https://sugang.ssu.ac.kr', '숭실대학교 수강신청', '대학', 2500, ARRAY['숭실대', '수강신청', 'SSU']),
 ('https://ticket.interpark.com', '인터파크 티켓', '티켓팅', 2000, ARRAY['인터파크', '티켓', '콘서트']),
 ('https://www.musinsa.com', '무신사', '쇼핑', 3000, ARRAY['무신사', '쇼핑', '패션']),
 ('https://www.yes24.com', 'YES24', '쇼핑', 2500, ARRAY['예스24', '책', '도서']),
@@ -188,11 +188,11 @@ CREATE INDEX idx_korean_mappings_verified ON korean_domain_mappings(verified);
 
 -- 기본 매핑 데이터 삽입
 INSERT INTO korean_domain_mappings (korean_name, actual_url, domain, category, verified) VALUES
-('서울대', 'https://www.snu.ac.kr', 'snu.ac.kr', '교육기관', true),
-('서울대학교', 'https://www.snu.ac.kr', 'snu.ac.kr', '교육기관', true),
-('연세대', 'https://www.yonsei.ac.kr', 'yonsei.ac.kr', '교육기관', true),
-('고려대', 'https://www.korea.edu', 'korea.edu', '교육기관', true),
-('카이스트', 'https://www.kaist.ac.kr', 'kaist.ac.kr', '교육기관', true),
+('서울대', 'https://www.snu.ac.kr', 'snu.ac.kr', '대학', true),
+('서울대학교', 'https://www.snu.ac.kr', 'snu.ac.kr', '대학', true),
+('연세대', 'https://www.yonsei.ac.kr', 'yonsei.ac.kr', '대학', true),
+('고려대', 'https://www.korea.edu', 'korea.edu', '대학', true),
+('카이스트', 'https://www.kaist.ac.kr', 'kaist.ac.kr', '대학', true),
 ('네이버', 'https://www.naver.com', 'naver.com', '포털', true),
 ('다음', 'https://www.daum.net', 'daum.net', '포털', true),
 ('구글', 'https://www.google.com', 'google.com', '포털', true);
