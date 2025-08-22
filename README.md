@@ -26,7 +26,7 @@ $ npm run dev
 - database/sites_register.sql 실행 // 티켓팅 카테고리 사이트 수동 등록
 - 서버 실행
     `npm run dev`
-- GET http://localhost:3001/api/sites/popular-sites?period=realtime
+- GET http://localhost:3001/api/sites/popular/popular-sites?period=realtime
 
     | 키 | 값 | 역할 |
     | --- | --- | --- |
