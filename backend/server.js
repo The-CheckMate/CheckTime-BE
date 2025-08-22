@@ -51,6 +51,9 @@ app.use("/api/interval", intervalRoutes);
 const siteRoutes = require("./routes/siteRoutes");
 app.use("/api/sites", siteRoutes);
 
+const popularRoutes = require('./routes/popularSiteRoutes');
+app.use('/api/sites/popular', popularRoutes);
+
 const authRoutes = require("./routes/authRoutes");
 app.use("/api/auth", authRoutes);
 

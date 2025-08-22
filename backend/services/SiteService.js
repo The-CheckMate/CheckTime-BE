@@ -2,6 +2,7 @@
 const { Pool } = require('pg');
 const levenshtein = require('fast-levenshtein');
 const SiteDiscoveryService = require('./SiteDiscoveryService');
+const popularService = require('./PopularSiteService'); 
 const { URL } = require('url');
 
 const pool = new Pool({
@@ -234,6 +235,13 @@ class SiteService {
       
       
       console.log(`검색 완료: ${sortedResults.length}개 결과 찾음`);
+
+      // // 사용량 증가: 첫 번째 추천 사이트에 대해서만
+      if (sortedResults.length > 0) {
+            const firstSite = sortedResults[0];
+            await this.incrementUsage(firstSite.id, firstSite.category); // 카테고리 정보 추가
+            console.log(`[incrementUsage] siteId=${firstSite.id}, category=${firstSite.category}`);
+        }
       
       return {
         searchTerm,
@@ -626,17 +634,23 @@ class SiteService {
   }
 
   /**
-   * 사이트 사용량 증가
+   * 사이트 사용량 증가 및 인기 링크 로그 기록
+   * @param {number} siteId - 클릭된 사이트의 ID
+   * @param {string} category - 사이트의 카테고리
    */
-  async incrementUsage(siteId) {
+  async incrementUsage(siteId, category) {
     try {
+      // 인기 링크 로그 기록 (PopularSiteService 사용)
+      await popularService.logClick(siteId, category);
+
+      // 기존 usage_count 증가 (전체 기간 인기 순위용)
       await pool.query(`
         UPDATE sites 
         SET usage_count = usage_count + 1, updated_at = CURRENT_TIMESTAMP
         WHERE id = $1
       `, [siteId]);
     } catch (error) {
-      console.error('사이트 사용량 증가 실패:', error);
+      console.error('사이트 사용량 증가 및 로그 기록 실패:', error);
     }
   }
 
@@ -815,7 +829,7 @@ class SiteService {
       const siteData = {
         url: discoveryResult.url,
         name: discoveryResult.name || originalSearchTerm,
-        category: discoveryResult.category || 'general',
+        category: this.determineCategory(originalSearchTerm, discoveryResult.category),
         description: discoveryResult.description || `자동 발견된 사이트: ${originalSearchTerm}`,
         optimal_offset: 2500,
         keywords: [
@@ -879,6 +893,28 @@ class SiteService {
       console.warn('자동 발견 로그 기록 실패:', error.message);
       // 로그 실패는 전체 프로세스를 중단하지 않음
     }
+  }
+
+  /**
+   * 검색어를 분석하여 카테고리를 결정하는 헬퍼 함수
+   */
+  determineCategory(searchTerm, defaultCategory) {
+    const lowerCaseTerm = searchTerm.toLowerCase();
+    
+    // 티켓팅 관련 키워드 확인
+    const ticketingKeywords = ['ticket', 'ticketing', '티켓', '티켓팅'];
+    if (ticketingKeywords.some(keyword => lowerCaseTerm.includes(keyword))) {
+      return '티켓팅';
+    }
+    
+    // 대학 관련 키워드 확인
+    const universityKeywords = ['univ', 'university', 'college', '대학', '학교', '학원'];
+    const isUniversityKeywordIncluded = universityKeywords.some(keyword => lowerCaseTerm.includes(keyword));
+    if (lowerCaseTerm.endsWith('대') || isUniversityKeywordIncluded) {
+      return '대학';
+    }
+    
+    return defaultCategory;
   }
 
 }
