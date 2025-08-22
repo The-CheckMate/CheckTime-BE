@@ -76,7 +76,7 @@ async searchUniversityAPI(term) {
         url,
         name: meta.title || match.name,
         description: meta.description,
-        category: '교육기관',
+        category: '대학',
         keywords: [term],
         confidence: 0.95,
         source: 'university-api'
