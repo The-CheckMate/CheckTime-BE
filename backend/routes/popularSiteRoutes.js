@@ -11,6 +11,7 @@ const popularService = require('../services/PopularSiteService');
  */
 router.get('/popular-sites', async (req, res) => {
     const { period, category, limit = 5 } = req.query;
+    const limitNum = Number(limit);
 
     if (!['daily', 'weekly', 'realtime', 'all'].includes(period)) {
         return res.status(400).json({ 
@@ -18,19 +19,19 @@ router.get('/popular-sites', async (req, res) => {
             error: "유효하지 않은 기간입니다. 'daily', 'weekly', 'realtime', 'all' 중 하나를 선택하세요." 
         });
     }
-    if (isNaN(parseInt(limit)) || parseInt(limit) <= 0) {
+    if (!Number.isInteger(limitNum) || limitNum <= 0) {
         return res.status(400).json({
             success: false,
-            error: "Invalid limit. Must be a positive integer."
+            error: "유효하지 않은 limit 값입니다. 양의 정수여야 합니다."
         });
     }
 
     try {
         let popularSites;
         if (period === 'all') {
-            popularSites = await popularService.getOverallPopularSites(category, parseInt(limit));
+            popularSites = await popularService.getOverallPopularSites(category, limitNum);
         } else {
-            popularSites = await popularService.getPopularSites(period, category, parseInt(limit));
+            popularSites = await popularService.getPopularSites(period, category, limitNum);
         }
 
         res.json({
