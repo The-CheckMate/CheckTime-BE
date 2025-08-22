@@ -232,4 +232,5 @@ CREATE TABLE IF NOT EXISTS popular_site_clicks (
 
 CREATE INDEX idx_popular_site_clicks_time ON popular_site_clicks (clicked_at);
 CREATE INDEX idx_popular_site_clicks_category ON popular_site_clicks (category);
-CREATE INDEX idx_popular_site_clicks_time_category ON popular_site_clicks (clicked_at, category);
+CREATE INDEX idx_popular_site_clicks_category_time ON popular_site_clicks (category, clicked_at);
+CREATE INDEX idx_popular_site_clicks_site_time ON popular_site_clicks (site_id, clicked_at);
