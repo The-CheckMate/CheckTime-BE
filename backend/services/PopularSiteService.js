@@ -65,6 +65,7 @@ class PopularSiteService {
                     sites s ON p.site_id = s.id
                 WHERE
                     p.clicked_at > ${interval}
+                    AND s.is_active = true
             `;
 
             const params = [];
