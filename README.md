@@ -6,7 +6,6 @@ $ npm run dev
 
 ## 📍notice
 - 인기 사이트 조회 기능 추가
-- 티켓팅 사이트 수동으로 삽입 필요(sql 쿼리 업데이트 예정)
 
 ## 테스트
 - database/schema.sql 226행~ 실행
@@ -22,6 +21,7 @@ $ npm run dev
     CREATE INDEX idx_popular_site_clicks_category ON popular_site_clicks (category);
     CREATE INDEX idx_popular_site_clicks_time_category ON popular_site_clicks (clicked_at, category);
     ```
+- database/sites_register.sql 실행 // 티켓팅 카테고리 사이트 수동 등록
 - 서버 실행
     `npm run dev`
 - GET http://localhost:3001/api/sites/popular-sites?period=realtime
