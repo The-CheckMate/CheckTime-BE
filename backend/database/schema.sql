@@ -44,7 +44,8 @@ CREATE TABLE access_logs (
     user_id INTEGER REFERENCES users(id),
     site_id INTEGER REFERENCES sites(id),
     target_time TIMESTAMP NOT NULL,
-    actual_access_time TIMESTAMP NOT NULL,
+    access_time TIMESTAMP NOT NULL, -- 필요에 의해 actual_ 제거
+    response_time DECIMAL(10,2), --응답시간 (ms) //컬럼 없어서 추가 , 사이트별 평균 rtt
     rtt DECIMAL(10,2), -- RTT 측정값 (ms)
     network_delay DECIMAL(10,2), -- 네트워크 지연 (ms)
     success BOOLEAN NOT NULL,
@@ -133,6 +134,20 @@ INSERT INTO domain_mappings (korean_name, actual_url, similarity_threshold) VALU
 ('무신사', 'https://www.musinsa.com', 0.8),
 ('예스24', 'https://www.yes24.com', 0.7),
 ('지마켓', 'https://www.gmarket.co.kr', 0.7);
+
+
+-------------------------------------------------
+------------ 새로고침 평균 시간 DB 저장 ------------
+-------------------------------------------------
+
+CREATE TABLE sites_inteval_avg (
+    site_id SERIAL PRIMARY KEY,
+    average_rtt DECIMAL(10,2), -- = access_logs.reponse_time
+    average_optimal_offset DECIMAL(10,2), -- 동적 오프셋 평균
+    optimal_interval DECIMAL(10,2), -- calculate > 최적 인터벌
+    last_update TIMESTAMP NOT NULL DEFAULT NOW(), --마지막 업데이트 시간
+    optimal_interval_avg DECIMAL(10,2) --새로고침 평균 시간
+);
 
 -------------------------------------------------
 --- 사이트 자동 발견 및 등록 기능을 위한 스키마 수정 ---
