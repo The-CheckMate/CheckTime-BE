@@ -13,11 +13,13 @@ class AccessLog {
     this.responseTime = logData.response_time;
     this.rtt = logData.rtt;
     this.accessTime = logData.access_time;
-    this.errorMessage = logData.error_message;
     this.userAgent = logData.user_agent;
     this.ipAddress = logData.ip_address;
+    this.targetTime = logData.target_time;
+    this.optimalOffset = logData.optimal_offset;
+    this.confidenceScore = logData.confidence_score;
   }
-
+  
   /**
    * 접속 로그 생성
    */
@@ -25,35 +27,90 @@ class AccessLog {
     const {
       userId,
       siteId,
+      targetTime, 
+      rtt,
       success,
+      optimalOffset, 
+      confidenceScore,
       responseTime,
-      rtt = null,
-      errorMessage = null,
       userAgent = null,
-      ipAddress = null
+      ipAddress = null,
+      accessTime
     } = logData;
 
+    const responseQuery = `
+      SELECT AVG(rtt)::numeric(10,2) AS avg, COUNT(rtt) AS count
+      FROM access_logs 
+      WHERE site_id = $1;
+    `;
+    const avgRes = await pool.query(responseQuery, [siteId]);
+    const avgres = avgRes.rows[0].avg || rtt; //insert 전까지 reponse_time
+    const countres = parseInt(avgRes.rows[0].count, 10);
+    
+    const newAvgres = (countres === 0) ? rtt :(avgres*countres+rtt) / (countres+1); //최종 reponse_time
+    
     const query = `
-      INSERT INTO access_logs (
-        user_id, site_id, success, response_time, rtt, 
-        error_message, user_agent, ip_address, access_time
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-      RETURNING *
+        INSERT INTO access_logs (
+          user_id, site_id, target_Time, rtt, success, 
+          optimal_offset, confidence_score, user_Agent, ip_Address, access_Time, response_time
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7 ,$8, $9, NOW(), $10)
+      RETURNING *;
     `;
 
     const values = [
       userId,
       siteId,
-      success,
-      responseTime,
+      targetTime, 
       rtt,
-      errorMessage,
+      success,
+      optimalOffset, 
+      confidenceScore,
       userAgent,
-      ipAddress
+      ipAddress,
+      newAvgres
     ];
 
+    await AccessLog.sitesIntevalAvg(logData.siteId); //새로고침 평균 시간 계산
+
     const result = await pool.query(query, values);
+    return new AccessLog(result.rows[0]);
+  }
+
+    /**
+   * 새로고침 평균 시간 사이트별 저장
+   */
+  static async sitesIntevalAvg(siteId) {
+    const query = `
+      WITH init AS (
+        SELECT 
+            site_id, AVG(rtt) AS response_time, AVG(optimal_offset) AS rtt_offset
+        FROM access_logs
+          WHERE site_id = $1
+          GROUP BY site_id
+      ),
+      inteval_avg AS (
+        SELECT 
+          site_id, response_time, rtt_offset, (response_time + rtt_offset) AS avg_inteval
+        FROM init
+      )
+      INSERT INTO sites_inteval_avg(
+          site_id, average_rtt, average_optimal_offset, 
+          optimal_interval, last_update, optimal_interval_avg
+      ) SELECT 
+        site_id, response_time, rtt_offset, NULL, NOW(), avg_inteval
+        FROM inteval_avg
+        ON CONFLICT (site_id) DO UPDATE   
+        SET 
+          average_rtt = EXCLUDED.average_rtt,
+          average_optimal_offset = EXCLUDED.average_optimal_offset,
+          optimal_interval = EXCLUDED.optimal_interval,
+          last_update = NOW(),
+          optimal_interval_avg = EXCLUDED.optimal_interval_avg;
+    `;
+    // ON CONFLICT > insert 실패 시 update
+
+    const result = await pool.query(query, [siteId]);
     return new AccessLog(result.rows[0]);
   }
 
