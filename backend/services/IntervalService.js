@@ -532,9 +532,9 @@ class IntervalService {
     try {
       await pool.query(`
         INSERT INTO access_logs 
-        (user_id, site_id, target_time, actual_access_time, rtt, success, optimal_offset, confidence_score)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      `, [userId, siteId, targetTime, actualAccessTime, rtt, success, optimalOffset, confidenceScore]);
+        (user_id, site_id, target_time, rtt, success, optimal_offset, confidence_score ,access_time)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+      `, [userId, siteId, targetTime, rtt, success, optimalOffset, confidenceScore]);
       
       // 사이트 통계 업데이트
       if (siteId) {
