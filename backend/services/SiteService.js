@@ -1,6 +1,8 @@
 // 사이트 관리를 위하여...
 const { Pool } = require('pg');
 const levenshtein = require('fast-levenshtein');
+const SiteDiscoveryService = require('./SiteDiscoveryService');
+const popularService = require('./PopularSiteService'); 
 const { URL } = require('url');
 
 const pool = new Pool({
@@ -10,7 +12,9 @@ const pool = new Pool({
 class SiteService {
   constructor() {
     this.similarityThreshold = 0.6; // 유사도 임계값
-    this.maxSearchResults = 10; // 최대 검색 결과 수
+    this.maxSearchResults = 1; // 최대 검색 결과 수
+    this.discovery = new SiteDiscoveryService(); // 자동 발견 로직 수행
+    this.autoDiscoveryThreshold = 0.9; // 자동 발견을 위한 최소 유사도 임계값
   }
 
   /**
@@ -83,9 +87,9 @@ class SiteService {
   }
 
   /**
-   * 사이트 검색 (유사도 기반)
+   * 사이트 검색 (유사도 기반 + 자동 발견)
    */
-  async searchSites(searchTerm, userId = null) {
+  async searchSites(searchTerm, autoDiscover=true) {
     try {
       console.log(`사이트 검색: "${searchTerm}"`);
       
@@ -101,10 +105,18 @@ class SiteService {
       
       // 3. 유사도 계산 및 검색 결과 생성
       const searchResults = [];
+      let bestSimilarity = 0;
+      let bestMatch = null; // 최고 유사도 매치 추적
       
       for (const site of allSitesResult.rows) {
         const similarity = this.calculateSiteSimilarity(searchTerm, site);
         
+        // 최고 유사도 추적
+        if (similarity > bestSimilarity) {
+          bestSimilarity = similarity;
+          bestMatch = site;
+        }
+
         if (similarity >= this.similarityThreshold) {
           searchResults.push({
             ...site,
@@ -112,6 +124,7 @@ class SiteService {
             matchReason: this.getMatchReason(searchTerm, site, similarity)
           });
         }
+        bestSimilarity= Math.max(bestSimilarity, similarity);
       }
       
       // 4. 한글 도메인 매핑 결과 추가
@@ -126,6 +139,7 @@ class SiteService {
               similarity: 1.0,
               matchReason: 'korean_domain_mapping'
             });
+            bestSimilarity = 1.0;
           }
         }
       }
@@ -144,13 +158,72 @@ class SiteService {
               similarity: 1.0,
               matchReason: 'exact_url_match'
             });
+            bestSimilarity = 1.0;
           }
         }
       }
+
+      // 6. 자동 발견 로직 (기존 검색 결과가 없거나 유사도가 낮을 때)
+      let discoveredSite = null;
+      if(autoDiscover && bestSimilarity < this.autoDiscoveryThreshold){
+        console.log(`자동 발견 시작: 최고 유사도 ${bestSimilarity} < ${this.autoDiscoveryThreshold}`);
+
+        try{
+          const discoveryResult = await this.discovery.discoverSiteUrl(searchTerm);
+
+          if (discoveryResult && discoveryResult.url) {
+            console.log(`자동 발견 성공: ${discoveryResult.url}`);
+            
+            // 발견된 URL이 이미 DB에 있는지 확인
+            const existingSite = await this.getSiteByUrl(discoveryResult.url);
+            
+            if (existingSite) {
+              // 이미 존재하는 사이트면 검색 결과에 추가
+              console.log('발견된 URL이 이미 DB에 존재함');
+              searchResults.unshift({
+                ...existingSite,
+                similarity: 0.9,
+                matchReason: 'auto_discovered_existing'
+              });
+            } else {
+              // 새로운 사이트면 DB에 자동 등록
+              console.log('새로운 사이트 자동 등록 중...');
+              discoveredSite = await this.autoRegisterDiscoveredSite(discoveryResult, searchTerm);
+              
+              if (discoveredSite) {
+                searchResults.unshift({
+                  ...discoveredSite,
+                  similarity: 0.95,
+                  matchReason: 'auto_discovered_new',
+                  isNewlyRegistered: true
+                });
+                console.log(`새로운 사이트 자동 등록 완료: ${discoveredSite.name}`);
+              }
+            }
+          }
+        } catch (discoveryError) {
+          console.warn('자동 발견 실패:', discoveryError.message);
+          // 자동 발견 실패는 전체 검색을 중단하지 않음
+        }
+      }
+
+      // 자동 발견 실패 시 최고 유사도 결과라도 포함
+      if (searchResults.length === 0 && bestMatch) {
+        console.log('검색 결과가 없어서 최고 유사도 결과 포함');
+        searchResults.push({
+          ...bestMatch,
+          similarity: parseFloat(bestSimilarity.toFixed(3)),
+          matchReason: this.getMatchReason(searchTerm, bestMatch, bestSimilarity) + '_fallback'
+        });
+      }
       
-      // 6. 결과 정렬 및 제한
+      // 7. 결과 정렬 및 제한
       const sortedResults = searchResults
         .sort((a, b) => {
+          // 새로 발견된 것 최우선
+          if (a.isNewlyRegistered && !b.isNewlyRegistered) return -1;
+          if (!a.isNewlyRegistered && b.isNewlyRegistered) return 1;
+
           // 정확한 매치 우선
           if (a.similarity !== b.similarity) {
             return b.similarity - a.similarity;
@@ -160,18 +233,29 @@ class SiteService {
         })
         .slice(0, this.maxSearchResults);
       
-      // 7. 사용자 즐겨찾기 정보 추가
-      if (userId) {
-        await this.addUserFavoriteInfo(sortedResults, userId);
-      }
       
       console.log(`검색 완료: ${sortedResults.length}개 결과 찾음`);
+
+      // // 사용량 증가: 첫 번째 추천 사이트에 대해서만
+      if (sortedResults.length > 0) {
+            const firstSite = sortedResults[0];
+            await this.incrementUsage(firstSite.id, firstSite.category); // 카테고리 정보 추가
+            console.log(`[incrementUsage] siteId=${firstSite.id}, category=${firstSite.category}`);
+        }
       
       return {
         searchTerm,
         results: sortedResults,
         totalFound: sortedResults.length,
         koreanMapping: koreanMappingResult,
+        autoDiscovery: discoveredSite ? {
+          discovered: true,
+          newSite: discoveredSite,
+          source: discoveredSite.discovery_source
+        } : { 
+          discovered: false,
+          attempted : bestSimilarity<this.autoDiscoveryThreshold},
+        bestSimilarityFromDb: bestSimilarity,
         searchedAt: new Date().toISOString()
       };
       
@@ -197,7 +281,7 @@ class SiteService {
     if (site.url) {
       const urlParts = this.extractUrlParts(site.url);
       for (const part of urlParts) {
-        const urlSimilarity = this.calculateStringSimilarity(term, part);
+        const urlSimilarity = this.calculateStringSimilarity(term, part) * 0.9 ; // url 유사도 10% 줄이기
         maxSimilarity = Math.max(maxSimilarity, urlSimilarity);
       }
     }
@@ -219,8 +303,8 @@ class SiteService {
     
     // 4. 부분 문자열 매치 보너스
     const nameContains = nameNormalized.includes(term) || term.includes(nameNormalized);
-    if (nameContains && term.length >= 2) {
-      maxSimilarity = Math.max(maxSimilarity, 0.8);
+    if (nameContains && term.length >= 3) {
+      maxSimilarity = Math.max(maxSimilarity, 0.7);
     }
     
     return maxSimilarity;
@@ -538,145 +622,6 @@ class SiteService {
   }
 
   /**
-   * 사용자 즐겨찾기 정보 추가
-   */
-  async addUserFavoriteInfo(sites, userId) {
-    try {
-      const siteIds = sites.map(s => s.id).filter(id => id);
-      
-      if (siteIds.length === 0) return;
-      
-      const favResult = await pool.query(`
-        SELECT site_id, custom_name, custom_offset, notification_enabled
-        FROM user_favorites 
-        WHERE user_id = $1 AND site_id = ANY($2)
-      `, [userId, siteIds]);
-      
-      const favorites = new Map();
-      favResult.rows.forEach(fav => {
-        favorites.set(fav.site_id, fav);
-      });
-      
-      sites.forEach(site => {
-        const favInfo = favorites.get(site.id);
-        site.isFavorite = !!favInfo;
-        if (favInfo) {
-          site.favoriteInfo = {
-            customName: favInfo.custom_name,
-            customOffset: favInfo.custom_offset,
-            notificationEnabled: favInfo.notification_enabled
-          };
-        }
-      });
-      
-    } catch (error) {
-      console.error('즐겨찾기 정보 추가 실패:', error);
-      // 에러가 발생해도 검색 결과는 반환
-    }
-  }
-
-  /**
-   * 즐겨찾기 추가
-   */
-  async addToFavorites(userId, siteId, customName = null, customOffset = null) {
-    try {
-      // 사이트 존재 확인
-      const siteResult = await pool.query(
-        'SELECT * FROM sites WHERE id = $1 AND is_active = true',
-        [siteId]
-      );
-      
-      if (siteResult.rows.length === 0) {
-        throw new Error('사이트를 찾을 수 없습니다');
-      }
-      
-      // 중복 확인
-      const existingFav = await pool.query(
-        'SELECT * FROM user_favorites WHERE user_id = $1 AND site_id = $2',
-        [userId, siteId]
-      );
-      
-      if (existingFav.rows.length > 0) {
-        throw new Error('이미 즐겨찾기에 추가된 사이트입니다');
-      }
-      
-      const result = await pool.query(`
-        INSERT INTO user_favorites (user_id, site_id, custom_name, custom_offset)
-        VALUES ($1, $2, $3, $4)
-        RETURNING *
-      `, [userId, siteId, customName, customOffset]);
-      
-      return result.rows[0];
-      
-    } catch (error) {
-      console.error('즐겨찾기 추가 실패:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * 즐겨찾기 제거
-   */
-  async removeFromFavorites(userId, siteId) {
-    try {
-      const result = await pool.query(`
-        DELETE FROM user_favorites 
-        WHERE user_id = $1 AND site_id = $2
-        RETURNING *
-      `, [userId, siteId]);
-      
-      if (result.rows.length === 0) {
-        throw new Error('즐겨찾기에서 찾을 수 없습니다');
-      }
-      
-      return { success: true, message: '즐겨찾기에서 제거되었습니다' };
-      
-    } catch (error) {
-      console.error('즐겨찾기 제거 실패:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * 사용자 즐겨찾기 목록 조회
-   */
-  async getUserFavorites(userId) {
-    try {
-      const result = await pool.query(`
-        SELECT 
-          uf.*,
-          s.url, s.name, s.category, s.optimal_offset,
-          s.usage_count, s.success_rate, s.average_rtt
-        FROM user_favorites uf
-        JOIN sites s ON uf.site_id = s.id
-        WHERE uf.user_id = $1 AND s.is_active = true
-        ORDER BY uf.created_at DESC
-      `, [userId]);
-      
-      return result.rows.map(row => ({
-        id: row.id,
-        siteId: row.site_id,
-        customName: row.custom_name || row.name,
-        customOffset: row.custom_offset || row.optimal_offset,
-        notificationEnabled: row.notification_enabled,
-        site: {
-          url: row.url,
-          name: row.name,
-          category: row.category,
-          usageCount: row.usage_count,
-          successRate: row.success_rate,
-          averageRTT: row.average_rtt
-        },
-        addedAt: row.created_at
-      }));
-      
-    } catch (error) {
-      console.error('즐겨찾기 목록 조회 실패:', error);
-      throw new Error('즐겨찾기 목록을 불러올 수 없습니다');
-    }
-  }
-
-  /**
    * URL 유효성 검증
    */
   isValidUrl(url) {
@@ -689,17 +634,23 @@ class SiteService {
   }
 
   /**
-   * 사이트 사용량 증가
+   * 사이트 사용량 증가 및 인기 링크 로그 기록
+   * @param {number} siteId - 클릭된 사이트의 ID
+   * @param {string} category - 사이트의 카테고리
    */
-  async incrementUsage(siteId) {
+  async incrementUsage(siteId, category) {
     try {
+      // 인기 링크 로그 기록 (PopularSiteService 사용)
+      await popularService.logClick(siteId, category);
+
+      // 기존 usage_count 증가 (전체 기간 인기 순위용)
       await pool.query(`
         UPDATE sites 
         SET usage_count = usage_count + 1, updated_at = CURRENT_TIMESTAMP
         WHERE id = $1
       `, [siteId]);
     } catch (error) {
-      console.error('사이트 사용량 증가 실패:', error);
+      console.error('사이트 사용량 증가 및 로그 기록 실패:', error);
     }
   }
 
@@ -869,6 +820,103 @@ class SiteService {
       errors
     };
   }
+
+  /**
+   * 자동 발견된 사이트를 DB에 등록
+   */
+  async autoRegisterDiscoveredSite(discoveryResult, originalSearchTerm) {
+    try {
+      const siteData = {
+        url: discoveryResult.url,
+        name: discoveryResult.name || originalSearchTerm,
+        category: this.determineCategory(originalSearchTerm, discoveryResult.category),
+        description: discoveryResult.description || `자동 발견된 사이트: ${originalSearchTerm}`,
+        optimal_offset: 2500,
+        keywords: [
+          originalSearchTerm,
+          ...(discoveryResult.keywords || [])
+        ].filter((k, i, arr) => arr.indexOf(k) === i) // 중복 제거
+      };
+      
+      const result = await pool.query(`
+        INSERT INTO sites (
+          url, name, category, description, optimal_offset, keywords, auto_discovered,
+          discovery_source, discovery_confidence, last_verified_at, created_by
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, true, $7, $8, now(), $9)
+        RETURNING *
+      `, [
+        siteData.url,
+        siteData.name,
+        siteData.category,
+        siteData.description,
+        siteData.optimal_offset,
+        siteData.keywords,
+        discoveryResult.source, // discovery_source
+        discoveryResult.confidence, // discovery_confidence
+        null // created_by: 자동 발견은 사용자 정보가 없으므로 null
+      ]);
+      
+      // 자동 등록 로그 기록
+      await this.logAutoDiscovery(originalSearchTerm, discoveryResult, result.rows[0].id);
+      
+      return result.rows[0];
+      
+    } catch (error) {
+      console.error('자동 발견 사이트 등록 실패:', error);
+      
+      // 중복 URL 오류인 경우 기존 사이트 반환
+      if (error.message.includes('이미 등록된 사이트')) {
+        return await this.getSiteByUrl(discoveryResult.url);
+      }
+      
+      throw error;
+    }
+  }
+
+  /**
+   * 자동 발견 로그 기록
+   */
+  async logAutoDiscovery(searchTerm, discoveryResult, siteId) {
+    try {
+      await pool.query(`
+        INSERT INTO site_discovery_logs (
+          search_term, discovered_url, site_id, created_at
+        )
+        VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+      `, [
+        searchTerm,
+        discoveryResult.url,
+        siteId
+      ]);
+    } catch (error) {
+      console.warn('자동 발견 로그 기록 실패:', error.message);
+      // 로그 실패는 전체 프로세스를 중단하지 않음
+    }
+  }
+
+  /**
+   * 검색어를 분석하여 카테고리를 결정하는 헬퍼 함수
+   */
+  determineCategory(searchTerm, defaultCategory) {
+    const lowerCaseTerm = searchTerm.toLowerCase();
+    
+    // 티켓팅 관련 키워드 확인
+    const ticketingKeywords = ['ticket', 'ticketing', '티켓', '티켓팅'];
+    if (ticketingKeywords.some(keyword => lowerCaseTerm.includes(keyword))) {
+      return '티켓팅';
+    }
+    
+    // 대학 관련 키워드 확인
+    const universityKeywords = ['univ', 'university', 'college', '대학', '학교', '학원'];
+    const isUniversityKeywordIncluded = universityKeywords.some(keyword => lowerCaseTerm.includes(keyword));
+    if (lowerCaseTerm.endsWith('대') || isUniversityKeywordIncluded) {
+      return '대학';
+    }
+    
+    return defaultCategory;
+  }
+
 }
 
 module.exports = SiteService;
