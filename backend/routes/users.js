@@ -42,15 +42,6 @@ router.get('/profile', auth.required, async (req, res) => {
 
     const stats = statsResult.rows[0];
 
-    // 즐겨찾기 수 조회
-    const favoritesResult = await pool.query(`
-      SELECT COUNT(*) as favorites_count
-      FROM user_favorites 
-      WHERE user_id = $1
-    `, [userId]);
-
-    const favoritesCount = parseInt(favoritesResult.rows[0].favorites_count);
-
     res.json({
       success: true,
       data: {
@@ -62,8 +53,7 @@ router.get('/profile', auth.required, async (req, res) => {
             ? (parseInt(stats.successful_attempts) / parseInt(stats.total_attempts)) * 100 
             : 0,
           avgRTT: parseFloat(stats.avg_rtt) || 0,
-          lastAccess: stats.last_access,
-          favoritesCount
+          lastAccess: stats.last_access
         }
       }
     });
@@ -389,17 +379,17 @@ router.get('/stats', auth.required, [
       LIMIT 10
     `, [userId]);
 
-    // 즐겨찾기 통계
-    const favoritesResult = await pool.query(`
-      SELECT 
-        COUNT(*) as total_favorites,
-        COUNT(CASE WHEN uf.notification_enabled THEN 1 END) as notifications_enabled
-      FROM user_favorites uf
-      WHERE uf.user_id = $1
-    `, [userId]);
+    // // 즐겨찾기 통계
+    // const favoritesResult = await pool.query(`
+    //   SELECT 
+    //     COUNT(*) as total_favorites,
+    //     COUNT(CASE WHEN uf.notification_enabled THEN 1 END) as notifications_enabled
+    //   FROM user_favorites uf
+    //   WHERE uf.user_id = $1
+    // `, [userId]);
 
     const overall = overallResult.rows[0];
-    const favorites = favoritesResult.rows[0];
+    // const favorites = favoritesResult.rows[0];
 
     res.json({
       success: true,
@@ -416,10 +406,10 @@ router.get('/stats', auth.required, [
           firstAccess: overall.first_access,
           lastAccess: overall.last_access
         },
-        favorites: {
-          totalFavorites: parseInt(favorites.total_favorites) || 0,
-          notificationsEnabled: parseInt(favorites.notifications_enabled) || 0
-        },
+        // favorites: {
+        //   totalFavorites: parseInt(favorites.total_favorites) || 0,
+        //   notificationsEnabled: parseInt(favorites.notifications_enabled) || 0
+        // },
         daily: dailyResult.rows.map(row => ({
           date: row.date,
           attempts: parseInt(row.attempts),
@@ -591,7 +581,7 @@ router.delete('/account', auth.required, [
 
     try {
       // 사용자 즐겨찾기 삭제
-      await pool.query('DELETE FROM user_favorites WHERE user_id = $1', [userId]);
+      await pool.query('DELETE FROM user_bookmarks WHERE user_id = $1', [userId]);
       
       // 접속 로그는 통계를 위해 유지하되, 사용자 ID만 NULL로 설정
       await pool.query('UPDATE access_logs SET user_id = NULL WHERE user_id = $1', [userId]);
@@ -724,22 +714,8 @@ router.get('/notifications', auth.required, async (req, res) => {
         message: '사용자를 찾을 수 없습니다.'
       });
     }
-
-    const preferences = userResult.rows[0].preferences || {};
     
-    // 즐겨찾기별 알림 설정
-    const favoritesResult = await pool.query(`
-      SELECT 
-        uf.site_id,
-        uf.notification_enabled,
-        uf.custom_name,
-        s.name as site_name,
-        s.url
-      FROM user_favorites uf
-      JOIN sites s ON uf.site_id = s.id
-      WHERE uf.user_id = $1
-      ORDER BY uf.created_at DESC
-    `, [userId]);
+    const preferences = userResult.rows[0].preferences || {};
 
     res.json({
       success: true,
@@ -750,12 +726,6 @@ router.get('/notifications', auth.required, async (req, res) => {
           optimalTimeAlerts: true,
           successReports: true
         },
-        favorites: favoritesResult.rows.map(row => ({
-          siteId: row.site_id,
-          siteName: row.custom_name || row.site_name,
-          url: row.url,
-          notificationEnabled: row.notification_enabled
-        }))
       }
     });
 
@@ -764,58 +734,6 @@ router.get('/notifications', auth.required, async (req, res) => {
     res.status(500).json({
       success: false,
       message: '알림 설정 조회에 실패했습니다.',
-      error: error.message
-    });
-  }
-});
-
-// 즐겨찾기 알림 설정 업데이트
-router.put('/notifications/favorite/:siteId', auth.required, [
-  body('notificationEnabled').isBoolean().withMessage('알림 활성화는 boolean이어야 합니다')
-], async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        errors: errors.array()
-      });
-    }
-
-    const userId = req.user.id;
-    const { siteId } = req.params;
-    const { notificationEnabled } = req.body;
-
-    // 즐겨찾기 존재 확인
-    const favoriteResult = await pool.query(`
-      SELECT id FROM user_favorites 
-      WHERE user_id = $1 AND site_id = $2
-    `, [userId, siteId]);
-
-    if (favoriteResult.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: '즐겨찾기를 찾을 수 없습니다.'
-      });
-    }
-
-    // 알림 설정 업데이트
-    await pool.query(`
-      UPDATE user_favorites 
-      SET notification_enabled = $1
-      WHERE user_id = $2 AND site_id = $3
-    `, [notificationEnabled, userId, siteId]);
-
-    res.json({
-      success: true,
-      message: '알림 설정이 업데이트되었습니다.'
-    });
-
-  } catch (error) {
-    console.error('알림 설정 업데이트 실패:', error);
-    res.status(500).json({
-      success: false,
-      message: '알림 설정 업데이트에 실패했습니다.',
       error: error.message
     });
   }

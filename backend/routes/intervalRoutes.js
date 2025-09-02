@@ -3,6 +3,7 @@ const express = require("express");
 const IntervalService = require("../services/IntervalService");
 const auth = require("../middlewares/auth");
 const { body, validationResult } = require("express-validator");
+const AccessLog = require("../models/AccessLog");
 const router = express.Router();
 
 const intervalService = new IntervalService();
@@ -236,7 +237,7 @@ router.post(
   [
     body("siteId").optional().isInt().withMessage("유효한 사이트 ID여야 합니다"),
     body("targetTime").isISO8601().withMessage("유효한 목표 시간이어야 합니다"),
-    body("actualAccessTime").isISO8601().withMessage("유효한 실제 접속 시간이어야 합니다"),
+    //body("actualAccessTime").isISO8601().withMessage("유효한 실제 접속 시간이어야 합니다"),
     body("success").isBoolean().withMessage("성공 여부는 boolean이어야 합니다"),
     body("rtt").optional().isFloat({ min: 0 }).withMessage("RTT는 0 이상이어야 합니다"),
     body("optimalOffset").isInt({ min: 0 }).withMessage("최적 오프셋은 0 이상이어야 합니다"),
@@ -252,11 +253,23 @@ router.post(
         });
       }
 
+      
       const { siteId, targetTime, actualAccessTime, rtt, success, optimalOffset, confidenceScore } = req.body;
 
       const userId = req.user?.id || null;
 
-      await intervalService.logAccessAttempt(userId, siteId, targetTime, actualAccessTime, rtt, success, optimalOffset, confidenceScore);
+      //await intervalService.logAccessAttempt(userId, siteId, targetTime, actualAccessTime, rtt, success, optimalOffset, confidenceScore);
+      const logData = {
+        userId,
+        siteId,
+        targetTime, 
+        rtt,
+        success,
+        optimalOffset, 
+        confidenceScore,
+        actualAccessTime
+      }
+      await AccessLog.create(logData);
 
       res.json({
         success: true,
