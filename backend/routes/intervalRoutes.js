@@ -13,7 +13,7 @@ const intervalService = new IntervalService();
 // 최적 인터벌 계산 - 수정된 버전
 router.post("/calculate", async (req, res) => {
   try {
-    const { targetUrl, targetTime } = req.body;
+    const { targetUrl, targetTime, userAlertOffsets } = req.body;
 
     if (!targetUrl || !targetTime) {
       return res.status(400).json({
@@ -126,6 +126,41 @@ router.post("/calculate", async (req, res) => {
     const randomFactor = 0.95 + Math.random() * 0.1; // 0.95 ~ 1.05
     dynamicOffset = Math.round(dynamicOffset * randomFactor);
 
+    const finalOptimalRefreshTime = new Date(targetDateTime.getTime() - dynamicOffset);
+    const timeUntilRefresh = Math.max(finalOptimalRefreshTime.getTime() - currentTime.getTime(), 0);
+
+    const generateAlertSettings = (timeUntilRefresh, offsets = null) => {
+        const alerts = [];
+        if (offsets && Array.isArray(offsets) && offsets.length > 0) {
+            // 사용자 정의 오프셋이 있으면 그것을 사용
+            offsets.sort((a, b) => b - a).forEach(offsetSeconds => {
+                const offsetMillis = offsetSeconds * 1000;
+                if (timeUntilRefresh > offsetMillis) {
+                    alerts.push({
+                        type: 'custom_reminder',
+                        time: timeUntilRefresh - offsetMillis,
+                        message: `${offsetSeconds}초 후 접속 준비를 시작하세요`
+                    });
+                }
+            });
+        } else {
+            // 없으면 기본 알림 생성 (기존 로직)
+            if (timeUntilRefresh > 300000) {
+                alerts.push({ type: 'reminder', time: timeUntilRefresh - 300000, message: '5분 후 접속 준비를 시작하세요' });
+            }
+            if (timeUntilRefresh > 60000) {
+                alerts.push({ type: 'preparation', time: timeUntilRefresh - 60000, message: '1분 후 새로고침 준비를 하세요' });
+            }
+            if (timeUntilRefresh > 10000) {
+                alerts.push({ type: 'ready', time: timeUntilRefresh - 10000, message: '10초 후 새로고침하세요!' });
+            }
+        }
+        alerts.push({ type: 'action', time: timeUntilRefresh, message: '지금 새로고침하세요!', priority: 'high' });
+        return alerts;
+    };
+    
+    const alertSettings = generateAlertSettings(timeUntilRefresh, userAlertOffsets);
+
     res.json({
       success: true,
       data: {
@@ -134,6 +169,8 @@ router.post("/calculate", async (req, res) => {
         optimalRefreshTime: new Date(targetDateTime.getTime() - dynamicOffset).toISOString(),
         refreshInterval: Math.max(targetDateTime.getTime() - dynamicOffset - currentTime.getTime(), 0),
         timeRemaining: timeRemaining,
+        alertSettings: alertSettings,
+
 
         // 동적 요소들 (매번 변함!)
         dynamicFactors: {
