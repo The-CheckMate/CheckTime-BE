@@ -1,6 +1,7 @@
 // 인터벌 계산 API 라우트
 const express = require("express");
 const IntervalService = require("../services/IntervalService");
+const NetworkService = require('../services/NetworkService');
 const auth = require("../middlewares/auth");
 const { body, validationResult } = require("express-validator");
 const AccessLog = require("../models/AccessLog");
@@ -231,6 +232,8 @@ router.post(
 );
 
 // 접속 결과 로깅
+const networkService = new NetworkService();
+
 router.post(
   "/log-access",
   auth.optional,
@@ -254,9 +257,10 @@ router.post(
       }
 
       
-      const { siteId, targetTime, actualAccessTime, rtt, success, optimalOffset, confidenceScore } = req.body;
+      const { siteurl, siteId, targetTime, actualAccessTime, success, optimalOffset, confidenceScore } = req.body;
 
       const userId = req.user?.id || null;
+      const rtt = (await networkService.measureRTT(siteurl)).average;
 
       //await intervalService.logAccessAttempt(userId, siteId, targetTime, actualAccessTime, rtt, success, optimalOffset, confidenceScore);
       const logData = {
