@@ -169,9 +169,9 @@ router.post(
         });
       }
       
-      const { siteurl, siteId, targetTime, rtt, success, optimalOffset, confidenceScore} = req.body;
+      const { siteurl, siteId, targetTime, rtt, networkDelay,success, optimalOffset, confidenceScore} = req.body;
       const userId = req.user?.id || null;
-      const Input = { siteurl, userId, siteId, targetTime, rtt, success, optimalOffset, confidenceScore}
+      const Input = { siteurl, userId, siteId, targetTime, rtt, networkDelay, success, optimalOffset, confidenceScore}
       await intervalService.logAccessAttempt(Input);
 
       res.json({

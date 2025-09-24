@@ -557,27 +557,27 @@ class IntervalService {
    * 접속 결과 로깅
    */
   async logAccessAttempt(input) {
-    const {siteurl, userId, siteId, targetTime, rtt, success, optimalOffset, confidenceScore} = input;
+    const {siteurl, userId, siteId, targetTime, rtt, networkDelay, success, optimalOffset, confidenceScore} = input;
     try {
       await pool.query(`
         INSERT INTO access_logs 
-        (url, user_id, site_id, target_time, rtt, success, optimal_offset, confidence_score, access_time)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-      `, [siteurl, userId, siteId, targetTime, rtt, success, optimalOffset, confidenceScore]);
+        (url, user_id, site_id, target_time, rtt, network_delay, success, optimal_offset, confidence_score, access_time)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+      `, [siteurl, userId, siteId, targetTime, rtt, networkDelay, success, optimalOffset, confidenceScore]);
       
       // 사이트 통계 업데이트
       if (siteId) {
         //reponse_time > 사이트별 평균 rtt
-        const responseQuery = `
-          SELECT AVG(rtt)::numeric(10,2) AS avg, COUNT(rtt) AS count
-          FROM access_logs 
-          WHERE site_id = $1;
-        `;
-        const avgRes = await pool.query(responseQuery, [siteId]);
-        const avgres = avgRes.rows[0].avg || rtt; //insert 전까지 reponse_time
-        const countres = parseInt(avgRes.rows[0].count, 10);
+        //const responseQuery = `
+        //  SELECT AVG(rtt)::numeric(10,2) AS avg, COUNT(rtt) AS count
+        //  FROM access_logs 
+        //  WHERE site_id = $1;
+        //`;
+        //const avgRes = await pool.query(responseQuery, [siteId]);
+        //const avgres = avgRes.rows[0].avg || rtt; //insert 전까지 reponse_time
+        //const countres = parseInt(avgRes.rows[0].count, 10);
         
-        const newAvgres = (countres === 0) ? rtt :(avgres*countres+rtt) / (countres+1); //최종 reponse_time
+        //const newAvgres = (countres === 0) ? rtt :(avgres*countres+rtt) / (countres+1); //최종 reponse_time
         
         await this.updateSiteStatistics(siteId);
       }

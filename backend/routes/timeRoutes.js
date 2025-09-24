@@ -149,6 +149,7 @@ router.post("/compare", async (req, res) => {
           userId: userId || null,
           siteId: siteId || null, 
           rtt: rtt, 
+          networkDelay : networkDelay,
           success: true, 
           // optimalOffset: || 2500, // ||기본 오프셋
           // confidenceScore: 
