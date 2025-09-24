@@ -34,7 +34,7 @@ class IntervalService {
       
       // 3. 사이트 정보 및 과거 데이터 조회
       const siteInfo = await this.getSiteInfo(targetUrl);
-      const historicalData = await this.getHistoricalPerformance(siteInfo.id, userId);
+      const historicalData = await this.getHistoricalPerformance(siteInfo.id, userId);      
       
       // 4. 동적 오프셋 계산
       const dynamicOffset = this.calculateDynamicOffset(
@@ -88,7 +88,7 @@ class IntervalService {
    */
   calculateDynamicOffset(networkAnalysis, siteInfo, historicalData) {
     let baseOffset = siteInfo.optimal_offset || this.defaultOffset;
-    
+        
     // 1. 네트워크 RTT 기반 조정
     const rttAdjustment = this.calculateRTTAdjustment(networkAnalysis.rtt);
     
@@ -168,7 +168,7 @@ class IntervalService {
     }
     
     const successRate = historicalData.successRate;
-    
+
     // 성공률이 낮을수록 더 일찍 새로고침
     if (successRate < 50) return 2000;
     if (successRate < 70) return 1000;
@@ -323,6 +323,8 @@ class IntervalService {
       targetTime: new Date(targetTime).toISOString(),
       currentTime: currentTime.serverTime,
       
+      historicalData: historicalData.successRate,
+
       // 핵심 결과
       optimalRefreshTime: optimalRefreshTime.optimalTime.toISOString(),
       refreshInterval: dynamicOffset,
@@ -514,7 +516,7 @@ class IntervalService {
           SUM(CASE WHEN success THEN 1 ELSE 0 END) as successful_attempts,
           AVG(rtt) as avg_rtt,
           AVG(optimal_offset) as avg_optimal_offset,
-          MAX(created_at) as last_attempt
+          MAX(access_time) as last_attempt
         FROM access_logs 
         WHERE site_id = $1
       `;
@@ -526,16 +528,17 @@ class IntervalService {
         params.push(userId);
       }
       
-      query += ' AND created_at > NOW() - INTERVAL \'30 days\''; // 최근 30일
+      query += ' AND access_time > NOW() - INTERVAL \'30 days\''; // 최근 30일
       
       const result = await pool.query(query, params);
+      
       
       if (result.rows.length > 0 && result.rows[0].total_attempts > 0) {
         const data = result.rows[0];
         return {
           totalAttempts: parseInt(data.total_attempts),
           successfulAttempts: parseInt(data.successful_attempts),
-          successRate: (parseInt(data.successful_attempts) / parseInt(data.total_attempts)) * 100,
+          successRate: (parseInt(data.successful_attempts) / parseInt(data.total_attempts)) * 100 || 0.8,
           avgRTT: parseFloat(data.avg_rtt) || 0,
           avgOptimalOffset: parseFloat(data.avg_optimal_offset) || this.defaultOffset,
           lastAttempt: data.last_attempt
@@ -553,16 +556,29 @@ class IntervalService {
   /**
    * 접속 결과 로깅
    */
-  async logAccessAttempt(userId, siteId, targetTime, actualAccessTime, rtt, success, optimalOffset, confidenceScore) {
+  async logAccessAttempt(input) {
+    const {siteurl, userId, siteId, targetTime, rtt, success, optimalOffset, confidenceScore} = input;
     try {
       await pool.query(`
         INSERT INTO access_logs 
-        (user_id, site_id, target_time, rtt, success, optimal_offset, confidence_score ,access_time)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-      `, [userId, siteId, targetTime, rtt, success, optimalOffset, confidenceScore]);
+        (url, user_id, site_id, target_time, rtt, success, optimal_offset, confidence_score, access_time)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+      `, [siteurl, userId, siteId, targetTime, rtt, success, optimalOffset, confidenceScore]);
       
       // 사이트 통계 업데이트
       if (siteId) {
+        //reponse_time > 사이트별 평균 rtt
+        const responseQuery = `
+          SELECT AVG(rtt)::numeric(10,2) AS avg, COUNT(rtt) AS count
+          FROM access_logs 
+          WHERE site_id = $1;
+        `;
+        const avgRes = await pool.query(responseQuery, [siteId]);
+        const avgres = avgRes.rows[0].avg || rtt; //insert 전까지 reponse_time
+        const countres = parseInt(avgRes.rows[0].count, 10);
+        
+        const newAvgres = (countres === 0) ? rtt :(avgres*countres+rtt) / (countres+1); //최종 reponse_time
+        
         await this.updateSiteStatistics(siteId);
       }
       

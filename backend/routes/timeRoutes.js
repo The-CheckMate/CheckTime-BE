@@ -1,10 +1,14 @@
 // 시간 관련 API 라우트
 const express = require("express");
 const TimeService = require("../services/TimeService");
+const SiteService = require("../services/SiteService");
+const IntervalService = require("../services/IntervalService");
 const router = express.Router();
 const axios = require("axios");
 
 const timeService = new TimeService();
+const siteService = new SiteService();
+const intervalService = new IntervalService();
 
 // 현재 정확한 시간 조회
 router.get("/current", async (req, res) => {
@@ -76,8 +80,8 @@ router.get("/timezone/:timezone", async (req, res) => {
  */
 router.post("/compare", async (req, res) => {
   try {
-    const { targetUrl } = req.body;
-
+    const { targetUrl, userId } = req.body; //userId 없으면 null 처리
+        
     if (!targetUrl) {
       return res.status(400).json({
         success: false,
@@ -133,6 +137,31 @@ router.post("/compare", async (req, res) => {
       let reliability = "medium";
       if (rtt > 500) reliability = "low";
       else if (rtt < 100) reliability = "high";
+      
+      //로그 저장 시도
+      logInput = {};
+      try{
+        const siteId = await siteService.getSiteByUrl(targetUrl);
+        if(siteId!= null) siteId = siteId.id;
+
+        logInput = {
+          siteurl: targetUrl,
+          userId: userId || null,
+          siteId: siteId || null, 
+          rtt: rtt, 
+          success: true, 
+          // optimalOffset: || 2500, // ||기본 오프셋
+          // confidenceScore: 
+        }
+        console.log(logInput);
+
+      }catch(error) {
+        logInput.success = false;
+        console.error('접속 로그 저장 실패:', error);
+      } finally {
+        //로그 기록
+        const logResult = await intervalService.logAccessAttempt(logInput);
+      }
 
       // 응답 데이터 구성
       res.json({
@@ -141,7 +170,7 @@ router.post("/compare", async (req, res) => {
           targetUrl,
           timeComparison: {
             ourServerTime: ourTime.toISOString(),
-            targetServerTime: targetServerTime.toISOString(),
+            targetServerTime: targetServerTime.toISOString(), 
             correctedTargetTime: correctedTargetTime.toISOString(),
             timeDifference: timeDifference,
             timeDifferenceFormatted: formatTimeDifference(timeDifference),

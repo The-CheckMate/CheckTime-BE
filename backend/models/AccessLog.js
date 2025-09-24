@@ -38,17 +38,6 @@ class AccessLog {
       accessTime
     } = logData;
 
-    const responseQuery = `
-      SELECT AVG(rtt)::numeric(10,2) AS avg, COUNT(rtt) AS count
-      FROM access_logs 
-      WHERE site_id = $1;
-    `;
-    const avgRes = await pool.query(responseQuery, [siteId]);
-    const avgres = avgRes.rows[0].avg || rtt; //insert 전까지 reponse_time
-    const countres = parseInt(avgRes.rows[0].count, 10);
-    
-    const newAvgres = (countres === 0) ? rtt :(avgres*countres+rtt) / (countres+1); //최종 reponse_time
-    
     const query = `
         INSERT INTO access_logs (
           user_id, site_id, target_Time, rtt, success, 
@@ -71,14 +60,14 @@ class AccessLog {
       newAvgres
     ];
 
-    await AccessLog.sitesIntevalAvg(logData.siteId); //새로고침 평균 시간 계산
+    //await AccessLog.sitesIntevalAvg(logData.siteId); //새로고침 평균 시간 계산
 
     const result = await pool.query(query, values);
     return new AccessLog(result.rows[0]);
   }
 
     /**
-   * 새로고침 평균 시간 사이트별 저장
+   * 새로고침 평균 시간 사이트별 저장 <<<<<<<<<09/24이후 sites_inteval_avg db와 함께 폐기
    */
   static async sitesIntevalAvg(siteId) {
     const query = `
