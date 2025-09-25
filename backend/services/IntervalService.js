@@ -36,7 +36,6 @@ class IntervalService {
       const siteurl = targetUrl;
       const siteInfo = await this.getSiteInfo(targetUrl);
       const historicalData = await this.getHistoricalPerformance(siteurl, siteInfo.id, userId);      
-      
       // 4. 동적 오프셋 계산
       const dynamicOffset = this.calculateDynamicOffset(
         networkAnalysis,
@@ -73,7 +72,7 @@ class IntervalService {
       });
       
       console.log(`최적 인터벌 계산 완료: ${dynamicOffset}ms 전 새로고침`);
-      
+
       return finalResult;
       
     } catch (error) {
@@ -324,7 +323,7 @@ class IntervalService {
       targetTime: new Date(targetTime).toISOString(),
       currentTime: currentTime.serverTime,
       
-      historicalData: historicalData.successRate,
+      historicalData: historicalData?historicalData.successRate:null,
 
       // 핵심 결과
       optimalRefreshTime: optimalRefreshTime.optimalTime.toISOString(),
@@ -532,7 +531,6 @@ class IntervalService {
       query += ' AND access_time > NOW() - INTERVAL \'30 days\''; // 최근 30일
       
       const result = await pool.query(query, params);
-      
       
       if (result.rows.length > 0 && result.rows[0].total_attempts > 0) {
         const data = result.rows[0];

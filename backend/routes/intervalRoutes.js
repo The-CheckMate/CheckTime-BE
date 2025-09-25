@@ -156,6 +156,7 @@ router.post(
     body("siteId").optional().isInt().withMessage("유효한 사이트 ID여야 합니다"),
     body("success").isBoolean().withMessage("성공 여부는 boolean이어야 합니다"),
     body("rtt").optional().isFloat({ min: 0 }).withMessage("RTT는 0 이상이어야 합니다"),
+    body("networkDelay").optional().isFloat({ min: 0 }).withMessage("networkDelay는 0.00 이상이어야 합니다"),
     body("optimalOffset").isInt({ min: 0 }).withMessage("최적 오프셋은 0 이상이어야 합니다"),
     body("confidenceScore").isFloat({ min: 0, max: 1 }).withMessage("신뢰도는 0-1 사이여야 합니다"),
   ],

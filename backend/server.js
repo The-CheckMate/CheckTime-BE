@@ -62,7 +62,6 @@ app.use("/api/stats", statsRoutes);
 const bookmarksRoutes = require('./routes/bookmarksRoutes');
 app.use('/api/bookmarks', bookmarksRoutes);
 
-
 // 매크로 라우트 추가
 app.use('/api/macro', macroRoutes);
 

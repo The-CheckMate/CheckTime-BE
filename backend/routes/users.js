@@ -341,24 +341,24 @@ router.get('/stats', auth.required, [
         COUNT(CASE WHEN success THEN 1 END) as successful_attempts,
         AVG(rtt) as avg_rtt,
         AVG(confidence_score) as avg_confidence,
-        MIN(created_at) as first_access,
-        MAX(created_at) as last_access
+        MIN(access_time) as first_access,
+        MAX(access_time) as last_access
       FROM access_logs 
       WHERE user_id = $1
-        AND created_at > CURRENT_DATE - INTERVAL '${days} days'
+        AND access_time > CURRENT_DATE - INTERVAL '${days} days'
     `, [userId]);
 
     // 일별 통계
     const dailyResult = await pool.query(`
       SELECT 
-        DATE(created_at) as date,
+        DATE(access_time) as date,
         COUNT(*) as attempts,
         COUNT(CASE WHEN success THEN 1 END) as successes,
         AVG(rtt) as avg_rtt
       FROM access_logs 
       WHERE user_id = $1
-        AND created_at > CURRENT_DATE - INTERVAL '${days} days'
-      GROUP BY DATE(created_at)
+        AND access_time > CURRENT_DATE - INTERVAL '${days} days'
+      GROUP BY DATE(access_time)
       ORDER BY date DESC
     `, [userId]);
 
@@ -373,7 +373,7 @@ router.get('/stats', auth.required, [
       FROM access_logs al
       JOIN sites s ON al.site_id = s.id
       WHERE al.user_id = $1
-        AND al.created_at > CURRENT_DATE - INTERVAL '${days} days'
+        AND al.access_time > CURRENT_DATE - INTERVAL '${days} days'
       GROUP BY s.id, s.name, s.url
       ORDER BY attempts DESC
       LIMIT 10
