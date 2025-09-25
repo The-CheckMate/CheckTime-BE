@@ -3,7 +3,7 @@ const router = express.Router();
 const popularService = require('../services/PopularSiteService');
 
 /**
- * @route GET /api/sites/popular/popular-sites
+ * @route GET /api/popular-sites
  * @desc 인기 사이트 목록을 조회
  * @param {string} period - 'daily', 'weekly', 'realtime', 'all'
  * @param {string} [category] - 조회할 카테고리 (예: '티켓팅', '대학')
