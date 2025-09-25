@@ -33,9 +33,9 @@ class IntervalService {
       const networkAnalysis = await this.networkService.comprehensiveNetworkAnalysis(targetUrl);
       
       // 3. 사이트 정보 및 과거 데이터 조회
-      const siteurl = targetUrl;
       const siteInfo = await this.getSiteInfo(targetUrl);
       const historicalData = await this.getHistoricalPerformance(siteurl, siteInfo.id, userId);      
+      
       // 4. 동적 오프셋 계산
       const dynamicOffset = this.calculateDynamicOffset(
         networkAnalysis,
@@ -506,8 +506,8 @@ class IntervalService {
   /**
    * 과거 성능 데이터 조회
    */
-  async getHistoricalPerformance(siteurl, siteId, userId = null) {
-    if (!siteurl) return null;
+  async getHistoricalPerformance(siteId, userId = null) {
+    if (!siteId) return null;
     
     try {
       let query = `
@@ -518,10 +518,10 @@ class IntervalService {
           AVG(optimal_offset) as avg_optimal_offset,
           MAX(access_time) as last_attempt
         FROM access_logs 
-        WHERE url = $1
+        WHERE site_id = $1
       `;
       
-      const params = [siteurl];
+      const params = [siteId];
       
       if (userId) {
         query += ' AND user_id = $2';
