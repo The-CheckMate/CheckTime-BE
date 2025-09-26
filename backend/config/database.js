@@ -28,7 +28,7 @@
 const { Pool } = require('pg');
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://postgres:iecHntNCtudiADArRJwIguKUeSOTpzpM@switchback.proxy.rlwy.net:59567/railway',
+  connectionString: process.env.DATABASE_URL || 'postgresql://checktime_user:1290@localhost:5432/checktime',
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
   max: 20, // 최대 연결 수
   idleTimeoutMillis: 30000, // 유휴 연결 타임아웃
