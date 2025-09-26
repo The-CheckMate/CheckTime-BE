@@ -33,6 +33,7 @@ class IntervalService {
       const networkAnalysis = await this.networkService.comprehensiveNetworkAnalysis(targetUrl);
       
       // 3. 사이트 정보 및 과거 데이터 조회
+      const siteurl = targetUrl;
       const siteInfo = await this.getSiteInfo(targetUrl);
       const historicalData = await this.getHistoricalPerformance(siteurl, siteInfo.id, userId);      
       
@@ -506,8 +507,8 @@ class IntervalService {
   /**
    * 과거 성능 데이터 조회
    */
-  async getHistoricalPerformance(siteId, userId = null) {
-    if (!siteId) return null;
+  async getHistoricalPerformance(siteurl, siteId, userId = null) {
+    if (!siteurl) return null;
     
     try {
       let query = `
@@ -518,10 +519,10 @@ class IntervalService {
           AVG(optimal_offset) as avg_optimal_offset,
           MAX(access_time) as last_attempt
         FROM access_logs 
-        WHERE site_id = $1
+        WHERE url = $1
       `;
       
-      const params = [siteId];
+      const params = [siteurl];
       
       if (userId) {
         query += ' AND user_id = $2';
