@@ -1,0 +1,8 @@
+[start]
+cmd = "npm run dev"
+
+[build]
+cmd = "npm install"
+
+[nixpacks]
+paths = ["backend"]
