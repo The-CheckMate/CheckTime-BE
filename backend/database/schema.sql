@@ -139,15 +139,109 @@ INSERT INTO domain_mappings (korean_name, actual_url, similarity_threshold) VALU
 -------------------------------------------------
 ------------ 새로고침 평균 시간 DB 저장 ------------
 -------------------------------------------------
-
-CREATE TABLE sites_inteval_avg (
-    site_id SERIAL PRIMARY KEY,
-    average_rtt DECIMAL(10,2), -- = access_logs.reponse_time
-    average_optimal_offset DECIMAL(10,2), -- 동적 오프셋 평균
-    optimal_interval DECIMAL(10,2), -- calculate > 최적 인터벌
-    last_update TIMESTAMP NOT NULL DEFAULT NOW(), --마지막 업데이트 시간
-    optimal_interval_avg DECIMAL(10,2) --새로고침 평균 시간
+-- 사용자별 새로고침 기록 테이블
+CREATE TABLE user_refresh_records (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+    
+    -- 새로고침 시간 기록
+    refresh_time DECIMAL(10,2) NOT NULL, -- 밀리초 단위
+    
+    -- 사용자 최고/평균 기록
+    user_best_time DECIMAL(10,2), -- 해당 사이트의 사용자 최고 기록
+    user_average_time DECIMAL(10,2), -- 해당 사이트의 사용자 평균
+    
+    -- 메타데이터
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    UNIQUE(user_id, site_id)
 );
+
+-- 인덱스 생성
+CREATE INDEX idx_refresh_records_user_id ON user_refresh_records(user_id);
+CREATE INDEX idx_refresh_records_site_id ON user_refresh_records(site_id);
+CREATE INDEX idx_refresh_records_best_time ON user_refresh_records(user_best_time ASC);
+CREATE INDEX idx_refresh_records_avg_time ON user_refresh_records(user_average_time ASC);
+CREATE INDEX idx_refresh_records_site_best ON user_refresh_records(site_id, user_best_time ASC);
+CREATE INDEX idx_refresh_records_site_avg ON user_refresh_records(site_id, user_average_time ASC);
+
+-- 사이트별 순위 조회를 위한 뷰
+CREATE OR REPLACE VIEW refresh_rankings AS
+SELECT 
+    urr.site_id,
+    s.name as site_name,
+    s.url as site_url,
+    urr.user_id,
+    u.username,
+    urr.user_best_time,
+    urr.user_average_time,
+    urr.refresh_time as latest_refresh_time,
+    urr.created_at as last_updated,
+    
+    -- 최고 기록 순위
+    RANK() OVER (PARTITION BY urr.site_id ORDER BY urr.user_best_time ASC) as best_rank,
+    
+    -- 평균 기록 순위
+    RANK() OVER (PARTITION BY urr.site_id ORDER BY urr.user_average_time ASC) as avg_rank
+FROM user_refresh_records urr
+JOIN users u ON urr.user_id = u.id
+JOIN sites s ON urr.site_id = s.id
+WHERE urr.user_best_time IS NOT NULL;
+
+-- 전체 순위 조회를 위한 뷰 (모든 사이트 통합)
+CREATE OR REPLACE VIEW refresh_rankings_global AS
+SELECT 
+    urr.user_id,
+    u.username,
+    COUNT(DISTINCT urr.site_id) as sites_count,
+    AVG(urr.user_best_time) as avg_best_time,
+    AVG(urr.user_average_time) as avg_avg_time,
+    MIN(urr.user_best_time) as overall_best_time,
+    
+    -- 전체 순위
+    RANK() OVER (ORDER BY AVG(urr.user_best_time) ASC) as global_rank
+FROM user_refresh_records urr
+JOIN users u ON urr.user_id = u.id
+WHERE urr.user_best_time IS NOT NULL
+GROUP BY urr.user_id, u.username;
+
+
+-- 개별 반응속도 기록을 모두 저장하는 테이블 (선택사항)
+-- 더 정확한 평균 계산을 원할 경우 사용
+CREATE TABLE refresh_time_history (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+    refresh_time DECIMAL(10,2) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 인덱스 생성
+CREATE INDEX idx_refresh_history_user_site ON refresh_time_history(user_id, site_id);
+CREATE INDEX idx_refresh_history_created_at ON refresh_time_history(created_at);
+
+-- 평균 계산을 위한 함수
+CREATE OR REPLACE FUNCTION calculate_user_refresh_stats(p_user_id INTEGER, p_site_id INTEGER)
+RETURNS TABLE(
+    best_time DECIMAL(10,2),
+    avg_time DECIMAL(10,2),
+    total_count INTEGER
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        MIN(refresh_time) as best_time,
+        AVG(refresh_time) as avg_time,
+        COUNT(*)::INTEGER as total_count
+    FROM refresh_time_history
+    WHERE user_id = p_user_id 
+      AND site_id = p_site_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 사용 예시:
+-- SELECT * FROM calculate_user_refresh_stats(1, 1);
 
 -------------------------------------------------
 --- 사이트 자동 발견 및 등록 기능을 위한 스키마 수정 ---

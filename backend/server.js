@@ -62,6 +62,9 @@ app.use("/api/stats", statsRoutes);
 const bookmarksRoutes = require('./routes/bookmarksRoutes');
 app.use('/api/bookmarks', bookmarksRoutes);
 
+// 반응속도
+const refreshRecordsRouter = require('./routes/refreshRecords');
+app.use('/api/refresh-records', refreshRecordsRouter);
 
 // 매크로 라우트 추가
 app.use('/api/macro', macroRoutes);

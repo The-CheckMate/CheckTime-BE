@@ -9,7 +9,7 @@ export const Button = React.forwardRef<
     <button
       ref={ref}
       className={clsx(
-        'px-4 py-2 rounded-md font-semibold text-white bg-brand-blue-500 hover:bg-brand-blue-700 active:bg-brand-blue-900 transition-colors',
+        'px-6 py-4 rounded-md font-semibold bg-indigo-500 hover:bg-indigo-600 text-white transition-colors',
         className,
       )}
       {...props}
