@@ -4,7 +4,7 @@ const refreshRecordService = new RefreshRecordService();
 // 반응속도 테스트를 위한 고정 site_id
 // DB에서 INSERT INTO sites (url, name, category) VALUES ('reaction-test', '반응속도 테스트', 'test'); 실행 후
 // 해당 ID를 여기에 설정
-const REACTION_TEST_SITE_ID = 87;
+const REACTION_TEST_SITE_ID = 48;
 
 /**
  * 반응속도 기록 저장
