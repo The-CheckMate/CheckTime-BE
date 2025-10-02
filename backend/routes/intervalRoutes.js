@@ -4,7 +4,7 @@ const IntervalService = require("../services/IntervalService");
 const NetworkService = require('../services/NetworkService');
 const auth = require("../middlewares/auth");
 const { body, validationResult } = require("express-validator");
-const AccessLog = require("../models/AccessLog");
+//const AccessLog = require("../models/AccessLog");
 const router = express.Router();
 
 const intervalService = new IntervalService();
@@ -29,7 +29,7 @@ router.post("/calculate", async (req, res) => {
       req.user?.id || null,
       userAlertOffsets
     );
-
+        
     // 성공률 기반 추가 정보 포함하여 응답
     res.json({
       success: true,
@@ -48,8 +48,8 @@ router.post("/calculate", async (req, res) => {
         dynamicFactors: {
           currentRTT: result.networkAnalysis?.averageRTT || 0,
           networkCondition: result.networkAnalysis?.condition || 'unknown',
-          successRate: result.historicalData?.successRate ? 
-            `${result.historicalData.successRate.toFixed(1)}%` : "N/A",
+          successRate: result.historicalData? 
+            `${result.historicalData.toFixed(1)}%` : "N/A",
           dynamicOffset: result.refreshInterval,
           timeBasedAdjustment: result.timeBasedMultiplier > 1 ? 
             `+${Math.round((result.timeBasedMultiplier - 1) * 100)}%` : "none",
@@ -148,17 +148,15 @@ router.post(
 );
 
 // 접속 결과 로깅
-const networkService = new NetworkService();
-
 router.post(
   "/log-access",
   auth.optional,
   [
+    body("url").optional().isURL().withMessage("유효한 url이어야 합니다."),
     body("siteId").optional().isInt().withMessage("유효한 사이트 ID여야 합니다"),
-    body("targetTime").isISO8601().withMessage("유효한 목표 시간이어야 합니다"),
-    //body("actualAccessTime").isISO8601().withMessage("유효한 실제 접속 시간이어야 합니다"),
     body("success").isBoolean().withMessage("성공 여부는 boolean이어야 합니다"),
     body("rtt").optional().isFloat({ min: 0 }).withMessage("RTT는 0 이상이어야 합니다"),
+    body("networkDelay").optional().isFloat({ min: 0 }).withMessage("networkDelay는 0.00 이상이어야 합니다"),
     body("optimalOffset").isInt({ min: 0 }).withMessage("최적 오프셋은 0 이상이어야 합니다"),
     body("confidenceScore").isFloat({ min: 0, max: 1 }).withMessage("신뢰도는 0-1 사이여야 합니다"),
   ],
@@ -171,25 +169,11 @@ router.post(
           errors: errors.array(),
         });
       }
-
       
-      const { siteurl, siteId, targetTime, actualAccessTime, success, optimalOffset, confidenceScore } = req.body;
-
+      const { siteurl, siteId, targetTime, rtt, networkDelay,success, optimalOffset, confidenceScore} = req.body;
       const userId = req.user?.id || null;
-      const rtt = (await networkService.measureRTT(siteurl)).average;
-
-      //await intervalService.logAccessAttempt(userId, siteId, targetTime, actualAccessTime, rtt, success, optimalOffset, confidenceScore);
-      const logData = {
-        userId,
-        siteId,
-        targetTime, 
-        rtt,
-        success,
-        optimalOffset, 
-        confidenceScore,
-        actualAccessTime
-      }
-      await AccessLog.create(logData);
+      const Input = { siteurl, userId, siteId, targetTime, rtt, networkDelay, success, optimalOffset, confidenceScore}
+      await intervalService.logAccessAttempt(Input);
 
       res.json({
         success: true,

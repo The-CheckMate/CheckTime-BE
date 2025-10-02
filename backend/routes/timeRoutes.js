@@ -1,10 +1,16 @@
 // 시간 관련 API 라우트
 const express = require("express");
 const TimeService = require("../services/TimeService");
+const SiteService = require("../services/SiteService");
+const IntervalService = require("../services/IntervalService");
 const router = express.Router();
 const axios = require("axios");
+const NetworkService = require("../services/NetworkService");
 
 const timeService = new TimeService();
+const siteService = new SiteService();
+const networkService =  new NetworkService();
+const intervalService = new IntervalService();
 
 // 현재 정확한 시간 조회
 router.get("/current", async (req, res) => {
@@ -76,8 +82,8 @@ router.get("/timezone/:timezone", async (req, res) => {
  */
 router.post("/compare", async (req, res) => {
   try {
-    const { targetUrl } = req.body;
-
+    const { targetUrl, userId } = req.body; //userId 없으면 null 처리
+        
     if (!targetUrl) {
       return res.status(400).json({
         success: false,
@@ -92,7 +98,7 @@ router.post("/compare", async (req, res) => {
 
     // 2. 타겟 서버의 시간 측정
     const startTime = Date.now();
-
+    
     try {
       const response = await axios.head(targetUrl, {
         timeout: 5000,
@@ -133,6 +139,39 @@ router.post("/compare", async (req, res) => {
       let reliability = "medium";
       if (rtt > 500) reliability = "low";
       else if (rtt < 100) reliability = "high";
+      
+      //로그 저장 시도
+      logInput = {};
+
+      //url에 해당하는 site id가 존재하는지 확인
+      const siteInfo = await intervalService.getSiteInfo(targetUrl);
+
+      // 동적 오프셋 및 신뢰도 반영의 input 
+      const networkAnalysis = await networkService.comprehensiveNetworkAnalysis(targetUrl);
+      const historicalData = await intervalService.getHistoricalPerformance(targetUrl, siteInfo.id, userId);
+
+      const optimalOffset = await intervalService.calculateDynamicOffset(
+        networkAnalysis,
+        siteInfo,
+        historicalData
+      );
+
+      const confidenceScore = await intervalService.calculateConfidenceScore(
+        networkAnalysis,
+        historicalData,
+        optimalOffset
+      );
+
+      logInput = {
+        siteurl: targetUrl,
+        userId: userId || null,
+        siteId: siteInfo.id || null, 
+        rtt: rtt, 
+        networkDelay : networkDelay,
+        success: true, 
+        optimalOffset: optimalOffset || 2500, // ||db에 url에 대한 기록 없을 시 기본 오프셋
+        confidenceScore: confidenceScore || 0.5
+        }
 
       // 응답 데이터 구성
       res.json({
@@ -141,7 +180,7 @@ router.post("/compare", async (req, res) => {
           targetUrl,
           timeComparison: {
             ourServerTime: ourTime.toISOString(),
-            targetServerTime: targetServerTime.toISOString(),
+            targetServerTime: targetServerTime.toISOString(), 
             correctedTargetTime: correctedTargetTime.toISOString(),
             timeDifference: timeDifference,
             timeDifferenceFormatted: formatTimeDifference(timeDifference),
@@ -175,6 +214,12 @@ router.post("/compare", async (req, res) => {
           recommendation: "URL을 확인하거나 다른 서버를 시도해보세요",
         },
       });
+
+      //실패 로그 기록 저장 
+      logInput.success = false;
+      console.error('서버 접속 실패:', networkError);
+    } finally{
+      await intervalService.logAccessAttempt(logInput);
     }
   } catch (error) {
     console.error("시간 비교 오류:", error);
