@@ -104,7 +104,7 @@ class PopularSiteService {
         try {
             let query = `
                 SELECT
-                    id, url, name, category, usage_count as click_count
+                    id as site_id, url, name, category, usage_count as click_count
                 FROM
                     sites
                 WHERE

@@ -20,8 +20,9 @@ class IntervalService {
 
   /**
    * 동적 인터벌 계산 - 메인 알고리즘
+   * @param {string[]} [userAlertOffsets] - 사용자가 직접 설정한 알림 오프셋 (초 단위 배열)
    */
-  async calculateOptimalInterval(targetUrl, targetTime, userId = null) {
+  async calculateOptimalInterval(targetUrl, targetTime, userId = null, userAlertOffsets = null) {
     try {
       console.log(`최적 인터벌 계산 시작: ${targetUrl} → ${targetTime}`);
       
@@ -66,7 +67,8 @@ class IntervalService {
         confidenceScore,
         networkAnalysis,
         siteInfo,
-        historicalData
+        historicalData,
+        userAlertOffsets
       });
       
       console.log(`최적 인터벌 계산 완료: ${dynamicOffset}ms 전 새로고침`);
@@ -297,7 +299,8 @@ class IntervalService {
       confidenceScore,
       networkAnalysis,
       siteInfo,
-      historicalData
+      historicalData,
+      userAlertOffsets
     } = result;
     
     // 추가 권장사항 생성
@@ -308,8 +311,11 @@ class IntervalService {
     );
     
     // 알림 설정 제안
-    const alertSettings = this.generateAlertSettings(optimalRefreshTime.timeUntilRefresh);
-    
+    const alertSettings = this.generateAlertSettings(
+      optimalRefreshTime.timeUntilRefresh, 
+      userAlertOffsets
+    );
+
     return {
       success: true,
       targetUrl,
@@ -372,37 +378,56 @@ class IntervalService {
 
   /**
    * 알림 설정 제안
+   * @param {number} timeUntilRefresh - 새로고침까지 남은 시간 (ms)
+   * @param {number[]} [userAlertOffsets] - 사용자가 직접 설정한 알림 오프셋 (초 단위 배열)
    */
-  generateAlertSettings(timeUntilRefresh) {
+  generateAlertSettings(timeUntilRefresh, userAlertOffsets = null) {
     const alerts = [];
     
-    if (timeUntilRefresh > 300000) { // 5분 이상
-      alerts.push({
-        type: 'reminder',
-        time: timeUntilRefresh - 300000, // 5분 전 알림
-        message: '5분 후 접속 준비를 시작하세요'
+    if (userAlertOffsets && Array.isArray(userAlertOffsets) && userAlertOffsets.length > 0) {
+      // 오프셋이 큰 순서대로 정렬 (예: [60, 30, 10])
+      userAlertOffsets.sort((a, b) => b - a); 
+
+      userAlertOffsets.forEach(offsetSeconds => {
+        const offsetMillis = offsetSeconds * 1000;
+        // 남은 시간이 오프셋보다 클 경우에만 알림 생성
+        if (timeUntilRefresh > offsetMillis) {
+          alerts.push({
+            type: 'custom_reminder',
+            // 실제 setTimeout에 사용될 시간 (지금으로부터 몇 ms 후에 실행될지)
+            time: timeUntilRefresh - offsetMillis, 
+            message: `${offsetSeconds}초 전에 알림이 설정되었습니다.`
+          });
+        }
       });
-    }
-    
-    if (timeUntilRefresh > 60000) { // 1분 이상
-      alerts.push({
-        type: 'preparation',
-        time: timeUntilRefresh - 60000, // 1분 전 알림
-        message: '1분 후 새로고침 준비를 하세요'
-      });
-    }
-    
-    if (timeUntilRefresh > 10000) { // 10초 이상
-      alerts.push({
-        type: 'ready',
-        time: timeUntilRefresh - 10000, // 10초 전 알림
-        message: '10초 후 새로고침하세요!'
-      });
+    } else {
+      // 기존 로직: userAlertOffsets가 없으면 기본 알림 생성
+      if (timeUntilRefresh > 300000) { // 5분 이상
+        alerts.push({
+          type: 'reminder',
+          time: timeUntilRefresh - 300000,
+          message: '5분 후 접속 준비를 시작하세요'
+        });
+      }
+      if (timeUntilRefresh > 60000) { // 1분 이상
+        alerts.push({
+          type: 'preparation',
+          time: timeUntilRefresh - 60000,
+          message: '1분 후 새로고침 준비를 하세요'
+        });
+      }
+      if (timeUntilRefresh > 10000) { // 10초 이상
+        alerts.push({
+          type: 'ready',
+          time: timeUntilRefresh - 10000,
+          message: '10초 후 새로고침하세요!'
+        });
+      }
     }
     
     alerts.push({
       type: 'action',
-      time: 0, // 정확한 시점
+      time: timeUntilRefresh,
       message: '지금 새로고침하세요!',
       priority: 'high'
     });
