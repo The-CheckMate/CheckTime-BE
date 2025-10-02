@@ -138,7 +138,7 @@ INSERT INTO domain_mappings (korean_name, actual_url, similarity_threshold) VALU
 -------------------------------------------------
 ------------ 새로고침 평균 시간 DB 저장 ------------
 -------------------------------------------------
--- 사용자별 새로고침 기록 테이블------------------------------------------------------9/24이후 폐기 
+-- 사용자별 새로고침 기록 테이블
 CREATE TABLE user_refresh_records (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
