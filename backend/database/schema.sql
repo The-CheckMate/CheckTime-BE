@@ -43,9 +43,8 @@ CREATE TABLE access_logs (
     id SERIAL PRIMARY KEY,
     user_id INTEGER REFERENCES users(id),
     site_id INTEGER REFERENCES sites(id),
-    target_time TIMESTAMP NOT NULL,
+    target_time TIMESTAMP NOT NULL, --알림 설정을 한 경우에 실제값 들어간다
     access_time TIMESTAMP NOT NULL, -- 필요에 의해 actual_ 제거
-    response_time DECIMAL(10,2), --응답시간 (ms) //컬럼 없어서 추가 , 사이트별 평균 rtt
     rtt DECIMAL(10,2), -- RTT 측정값 (ms)
     network_delay DECIMAL(10,2), -- 네트워크 지연 (ms)
     success BOOLEAN NOT NULL,
@@ -139,7 +138,7 @@ INSERT INTO domain_mappings (korean_name, actual_url, similarity_threshold) VALU
 -------------------------------------------------
 ------------ 새로고침 평균 시간 DB 저장 ------------
 -------------------------------------------------
--- 사용자별 새로고침 기록 테이블
+-- 사용자별 새로고침 기록 테이블------------------------------------------------------9/24이후 폐기 
 CREATE TABLE user_refresh_records (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -242,6 +241,20 @@ $$ LANGUAGE plpgsql;
 
 -- 사용 예시:
 -- SELECT * FROM calculate_user_refresh_stats(1, 1);
+
+
+-------------------------------------------------
+--- access_logs 컬럼 수정 ---
+-------------------------------------------------
+ALTER TABLE access_logs
+ADD COLUMN url VARCHAR(500) NOT NULL, -- 사이트 구별
+ADD COLUMN response_time DECIMAL(10,2), --응답시간 (ms) //컬럼 없어서 추가 , 사이트별 평균 rtt
+DROP COLUMN user_agent,  
+DROP COLUMN created_at, --access_time//접속 시도 시간만 있어도 될 듯
+ALTER COLUMN target_time DROP NOT NULL;
+
+DROP TABLE IF EXISTS sites_inteval_avg; --필요없을듯 하여 폐기
+
 
 -------------------------------------------------
 --- 사이트 자동 발견 및 등록 기능을 위한 스키마 수정 ---
