@@ -17,10 +17,6 @@ const io = socketIo(server, {
 
 const PORT = 3001;
 
-// 매크로 관련 모듈 import (라우트보다 먼저)
-const macroRoutes = require('./routes/macroRoutes');
-const macroCronJobs = require('./utils/cronJobs');
-
 // 미들웨어 먼저 설정 (라우터 전에)
 app.use(helmet());
 app.use(
@@ -66,170 +62,14 @@ app.use('/api/bookmarks', bookmarksRoutes);
 const refreshRecordsRouter = require('./routes/refreshRecords');
 app.use('/api/refresh-records', refreshRecordsRouter);
 
-// 매크로 라우트 추가
-app.use('/api/macro', macroRoutes);
-
 // 기본 헬스체크
 app.get("/health", (req, res) => {
   res.json({ status: "OK" });
 });
 
-// 매크로 시스템 헬스체크
-app.get('/api/health/macro', async (req, res) => {
-    try {
-        const monitoring = await macroCronJobs.macroService.getSystemMonitoring();
-        const cronStatus = macroCronJobs.getJobStatus();
-        
-        const health = {
-            status: monitoring.status === 'healthy' && cronStatus.isRunning ? 'healthy' : 'unhealthy',
-            timestamp: new Date().toISOString(),
-            system: monitoring.systemLoad,
-            cronJobs: {
-                running: cronStatus.isRunning,
-                totalJobs: cronStatus.totalJobs,
-                activeJobs: Object.values(cronStatus.jobs).filter(job => job.running).length
-            },
-            database: {
-                connected: true // DB 연결 상태 체크 로직 추가 가능
-            }
-        };
-        
-        res.status(health.status === 'healthy' ? 200 : 503).json({
-            success: true,
-            data: health
-        });
-        
-    } catch (error) {
-        res.status(503).json({
-            success: false,
-            error: '헬스체크 실패',
-            details: error.message
-        });
-    }
-});
-
-// 관리자 API들
-// 크론잡 상태 확인 API
-app.get('/api/admin/cron-status', (req, res) => {
-    try {
-        const status = macroCronJobs.getJobStatus();
-        res.json({
-            success: true,
-            data: status
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// 특정 크론잡 재시작 API
-app.post('/api/admin/cron-restart/:jobName', (req, res) => {
-    try {
-        const { jobName } = req.params;
-        const success = macroCronJobs.restartJob(jobName);
-        
-        res.json({
-            success,
-            message: success ? `${jobName} 작업이 재시작되었습니다` : `${jobName} 작업을 찾을 수 없습니다`
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// 크론잡 수동 실행 API (테스트용)
-app.post('/api/admin/cron-execute/:jobType', async (req, res) => {
-    const { jobType } = req.params;
-    
-    try {
-        let result;
-        
-        switch (jobType) {
-            case 'scheduled-check':
-                result = await macroCronJobs.macroService.checkScheduledTasks();
-                break;
-            case 'cleanup':
-                result = await macroCronJobs.macroService.cleanupExpiredTasks();
-                break;
-            case 'monitoring':
-                result = await macroCronJobs.macroService.getSystemMonitoring();
-                break;
-            default:
-                return res.status(400).json({
-                    success: false,
-                    error: '지원하지 않는 작업 타입입니다'
-                });
-        }
-        
-        res.json({
-            success: true,
-            data: result
-        });
-        
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// 개발용 테스트 엔드포인트들
-if (process.env.NODE_ENV === 'development') {
-    // 테스트용 매크로 생성
-    app.post('/api/dev/create-test-macro', async (req, res) => {
-        try {
-            const MacroService = require('./services/MacroService');
-            const macroService = new MacroService();
-            
-            const targetTime = new Date(Date.now() + 60000); // 1분 후
-            
-            const result = await macroService.scheduleMacroTask(
-                null, // userId
-                'https://httpbin.org/delay/1', // 테스트 URL
-                targetTime.toISOString(),
-                'get',
-                { timeout: 5000 },
-                true // userConsent
-            );
-            
-            res.json({
-                success: true,
-                data: result,
-                message: '테스트 매크로가 생성되었습니다'
-            });
-            
-        } catch (error) {
-            res.status(500).json({
-                success: false,
-                error: error.message
-            });
-        }
-    });
-    
-    console.log('🔧 개발 모드: 테스트 엔드포인트 활성화됨');
-}
-
 // Socket.io 연결 처리
 io.on("connection", (socket) => {
   console.log("클라이언트 연결됨:", socket.id);
-
-  // 매크로 관련 실시간 이벤트 처리
-  socket.on("subscribe-macro-updates", (data) => {
-    console.log("매크로 업데이트 구독:", socket.id);
-    socket.join("macro-updates");
-  });
-
-  socket.on("unsubscribe-macro-updates", () => {
-    console.log("매크로 업데이트 구독 해제:", socket.id);
-    socket.leave("macro-updates");
-  });
 
   socket.on("disconnect", () => {
     console.log("클라이언트 연결 해제:", socket.id);
@@ -250,48 +90,10 @@ app.use((error, req, res, next) => {
   });
 });
 
-// 매크로 시스템 초기화 함수
-async function initializeMacroSystem() {
-    try {
-        console.log('🔧 매크로 시스템 초기화 중...');
-        
-        // DB 연결 테스트
-        const MacroService = require('./services/MacroService');
-        const macroService = new MacroService();
-        
-        await macroService.pool.query('SELECT 1');
-        console.log('✅ DB 연결 확인됨');
-        
-        // 멈춘 작업들 복구
-        const stuckTasks = await macroService.pool.query(`
-            UPDATE macro_tasks 
-            SET status = 'failed', 
-                error_message = '서버 재시작으로 인한 작업 실패'
-            WHERE status = 'running'
-        `);
-        
-        if (stuckTasks.rowCount > 0) {
-            console.log(`🔧 멈춘 작업 ${stuckTasks.rowCount}개 복구됨`);
-        }
-        
-        console.log('✅ 매크로 시스템 초기화 완료');
-        
-    } catch (error) {
-        console.error('❌ 매크로 시스템 초기화 실패:', error.message);
-        throw error;
-    }
-}
-
 // Graceful shutdown 함수
 function gracefulShutdown(signal) {
     console.log(`\n🛑 ${signal} 신호 수신, 서버 종료 중...`);
-    
-    // 크론잡 정리
-    if (macroCronJobs.isRunning) {
-        console.log('⏰ 매크로 크론잡 중지 중...');
-        macroCronJobs.gracefulShutdown();
-    }
-    
+
     // Socket.io 정리
     io.close(() => {
         console.log('✅ Socket.io 서버 종료됨');
@@ -333,29 +135,9 @@ process.on('unhandledRejection', (reason, promise) => {
 // 서버 시작
 async function startServer() {
     try {
-        // 매크로 시스템 초기화
-        await initializeMacroSystem();
-        
         // 서버 시작
         server.listen(PORT, () => {
             console.log(`🚀 서버가 포트 ${PORT}에서 실행 중입니다`);
-            
-            // 프로덕션 환경에서만 크론잡 자동 시작
-            if (process.env.NODE_ENV === 'production' || process.env.ENABLE_CRON === 'true') {
-                console.log('⏰ 매크로 크론잡 시작 중...');
-                try {
-                    macroCronJobs.startAllJobs();
-                    console.log('✅ 매크로 크론잡이 성공적으로 시작되었습니다');
-                    
-                    // Socket.io로 크론잡 시작 알림
-                    io.emit('cron-status', { status: 'started', timestamp: new Date().toISOString() });
-                } catch (error) {
-                    console.error('❌ 매크로 크론잡 시작 실패:', error.message);
-                }
-            } else {
-                console.log('ℹ️ 개발 환경: 매크로 크론잡이 비활성화되었습니다');
-                console.log('   활성화하려면 ENABLE_CRON=true 환경변수를 설정하세요');
-            }
         });
         
     } catch (error) {
