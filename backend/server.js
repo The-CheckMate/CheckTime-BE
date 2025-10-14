@@ -10,7 +10,10 @@ const app = express();
 const server = http.createServer(app); // 이 부분이 빠져있었음!
 const io = socketIo(server, {
   cors: {
-    origin: "http://localhost:3000",
+    origin: [
+       "http://localhost:3000",
+       "https://checktime-liart.vercel.app",
+    ],
     methods: ["GET", "POST"],
   },
 });
@@ -21,7 +24,10 @@ const PORT = 3001;
 app.use(helmet());
 app.use(
   cors({
-    origin: "http://localhost:3000",
+    origin: [
+      "http://localhost:3000",
+      "https://checktime-liart.vercel.app",
+    ],
     credentials: true,
   })
 );
